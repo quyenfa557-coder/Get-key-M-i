@@ -1,0 +1,3 @@
+# Dùng khi chạy local. Không commit file .dev.vars thật lên GitHub.
+ADMIN_TOKEN=doi-thanh-mat-khau-rat-dai
+DEVICE_SALT=doi-thanh-chuoi-ngau-nhien-rat-dai

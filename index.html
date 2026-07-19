@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#07111d">
+  <title>Sent Tweaks Get Key</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="grid"></div>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">SECURE ACCESS SYSTEM</p>
+      <h1>Sent Tweaks <span>Get Key</span></h1>
+      <p class="lead">Tạo key thời hạn 12 giờ hoặc 24 giờ. Mỗi key chỉ kích hoạt trên một thiết bị.</p>
+    </section>
+
+    <section class="panel">
+      <label for="deviceId">DEVICE ID</label>
+      <input id="deviceId" autocomplete="off" maxlength="200" placeholder="Nhập Device ID của ứng dụng">
+      <div class="plans">
+        <button class="plan" data-hours="12">
+          <small>GÓI CƠ BẢN</small><strong>12H</strong><span>Nhận key 12 giờ</span>
+        </button>
+        <button class="plan" data-hours="24">
+          <small>GÓI NÂNG CAO</small><strong>24H</strong><span>Nhận key 24 giờ</span>
+        </button>
+      </div>
+      <p id="message" class="message" aria-live="polite"></p>
+    </section>
+
+    <section id="result" class="panel result hidden">
+      <div class="result-head"><span>KEY CỦA BẠN</span><span id="statusBadge" class="badge">ACTIVE</span></div>
+      <div class="key-row"><code id="keyValue">—</code><button id="copyBtn" class="copy">SAO CHÉP</button></div>
+      <div class="meta">
+        <div><span>Thời hạn</span><strong id="planValue">—</strong></div>
+        <div><span>Hết hạn</span><strong id="expiresValue">—</strong></div>
+      </div>
+      <button id="claimBtn" class="primary">KÍCH HOẠT TRÊN THIẾT BỊ NÀY</button>
+    </section>
+
+    <section class="panel verify-box">
+      <h2>Kiểm tra key</h2>
+      <input id="verifyKey" autocomplete="off" placeholder="SENT-XXXXX-XXXXX-XXXXX">
+      <button id="verifyBtn" class="secondary">KIỂM TRA</button>
+      <p id="verifyMessage" class="message" aria-live="polite"></p>
+    </section>
+
+    <footer>Không thu thập hoặc lưu địa chỉ IP.</footer>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "senttweaks-getkey",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-19",
+  "assets": {
+    "directory": "./public/",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/senttwgetkey", "/senttwnhankey"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "senttweaks-getkey-db",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "DEMO_MODE": "true"
+  }
+}
