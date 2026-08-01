@@ -1,18 +1,22 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "senttweaks-getkey",
+  "name": "snowy-cherry-0514",
   "main": "src/index.js",
-  "compatibility_date": "2026-07-19",
+  "compatibility_date": "2026-08-01",
   "assets": {
     "directory": "./public/",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/senttwgetkey", "/senttwnhankey"]
+    "run_worker_first": [
+      "/api/*",
+      "/senttwgetkey",
+      "/senttwnhankey"
+    ]
   },
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "senttweaks-getkey-db",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "database_name": "sent-key-db",
+      "database_id": "ed7fc490-f3d1-4b45-ab68-83bf89cc65d6",
       "migrations_dir": "migrations"
     }
   ],
