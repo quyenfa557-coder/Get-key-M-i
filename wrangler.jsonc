@@ -1,10 +1,10 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "snowy-cherry-0514",
-  "main": "src/index.js",
+  "main": "index.js",
   "compatibility_date": "2026-08-01",
   "assets": {
-    "directory": "./public/",
+    "directory": ".",
     "binding": "ASSETS",
     "run_worker_first": [
       "/api/*",
@@ -17,7 +17,7 @@
       "binding": "DB",
       "database_name": "sent-key-db",
       "database_id": "ed7fc490-f3d1-4b45-ab68-83bf89cc65d6",
-      "migrations_dir": "migrations"
+      "migrations_dir": "."
     }
   ],
   "vars": {
