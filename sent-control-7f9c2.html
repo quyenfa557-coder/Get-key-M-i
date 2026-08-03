@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#07111f">
+  <title>Sent Control Center</title>
+  <link rel="stylesheet" href="/sent-control.css">
+</head>
+<body>
+  <div class="orb orb-one"></div>
+  <div class="orb orb-two"></div>
+
+  <main class="shell">
+    <header class="header">
+      <div class="brand">
+        <div class="logo">S</div>
+        <div>
+          <strong>Sent Control Center</strong>
+          <span>Private admin workspace</span>
+        </div>
+      </div>
+      <span class="private-badge">PRIVATE</span>
+    </header>
+
+    <section id="loginCard" class="card login-card">
+      <div class="section-heading">
+        <span class="eyebrow">ADMIN AUTHENTICATION</span>
+        <h1>Đăng nhập quản trị</h1>
+        <p>Nhập token bí mật đã lưu trong Cloudflare Worker.</p>
+      </div>
+
+      <label class="field">
+        <span>Admin token</span>
+        <div class="password-wrap">
+          <input id="adminToken" type="password" autocomplete="off"
+                 placeholder="Dán ADMIN_TOKEN tại đây">
+          <button id="toggleToken" type="button" aria-label="Hiện hoặc ẩn token">Hiện</button>
+        </div>
+      </label>
+
+      <label class="remember">
+        <input id="rememberSession" type="checkbox" checked>
+        <span>Chỉ ghi nhớ trong tab này</span>
+      </label>
+
+      <button id="loginBtn" class="primary" type="button">Mở bảng điều khiển</button>
+      <p id="loginMessage" class="message" aria-live="polite"></p>
+    </section>
+
+    <section id="dashboard" class="dashboard hidden">
+      <div class="dashboard-grid">
+        <section class="card">
+          <div class="section-heading compact">
+            <span class="eyebrow">CREATE LICENSE</span>
+            <h2>Tạo key không qua Link4m</h2>
+            <p>Key được tạo trực tiếp từ API quản trị và vẫn hoạt động như key bình thường.</p>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>Thời hạn</span>
+              <select id="planHours">
+                <option value="24">24 giờ</option>
+                <option value="12">12 giờ</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Số lượng</span>
+              <input id="keyCount" type="number" min="1" max="20" value="1">
+            </label>
+          </div>
+
+          <button id="createBtn" class="primary" type="button">
+            <span>⚡</span>
+            <span>Tạo key ngay</span>
+          </button>
+
+          <p id="createMessage" class="message" aria-live="polite"></p>
+        </section>
+
+        <section class="card">
+          <div class="section-heading compact row-heading">
+            <div>
+              <span class="eyebrow">OUTPUT</span>
+              <h2>Key vừa tạo</h2>
+            </div>
+            <button id="copyAllBtn" class="secondary small" type="button" disabled>
+              Sao chép tất cả
+            </button>
+          </div>
+
+          <div id="emptyResult" class="empty-state">
+            Chưa có key nào trong phiên này.
+          </div>
+
+          <div id="resultList" class="result-list hidden"></div>
+        </section>
+      </div>
+
+      <section class="card revoke-card">
+        <div class="section-heading compact">
+          <span class="eyebrow">REVOKE LICENSE</span>
+          <h2>Thu hồi key</h2>
+          <p>Key bị thu hồi sẽ không thể đăng nhập lại.</p>
+        </div>
+
+        <div class="revoke-row">
+          <input id="revokeKey" type="text"
+                 placeholder="SENT-XXXXX-XXXXX-XXXXX"
+                 autocomplete="off">
+          <button id="revokeBtn" class="danger" type="button">Thu hồi</button>
+        </div>
+        <p id="revokeMessage" class="message" aria-live="polite"></p>
+      </section>
+
+      <footer>
+        <span>Sent Tweaks • Admin only</span>
+        <button id="logoutBtn" class="text-button" type="button">Đăng xuất</button>
+      </footer>
+    </section>
+  </main>
+
+  <script src="/sent-control.js" defer></script>
+</body>
+</html>
