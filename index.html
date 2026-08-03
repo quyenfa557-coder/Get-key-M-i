@@ -2,107 +2,130 @@
 <html lang="vi">
 <head>
   <meta charset="utf-8">
-  <meta
-    name="viewport"
-    content="width=device-width,initial-scale=1,viewport-fit=cover"
-  >
-  <meta name="theme-color" content="#1677ff">
-  <title>Sent Get Key</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1220">
+  <title>Sent Tweaks Get Key</title>
   <link rel="stylesheet" href="/style.css">
 </head>
-
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-icon">◇</span>
-      <span>S E N T K E Y</span>
-    </div>
+  <div class="bg-blur blur-1"></div>
+  <div class="bg-blur blur-2"></div>
 
-    <button class="menu-button" type="button" aria-label="Menu">
-      <span></span>
-      <span></span>
-      <span></span>
-    </button>
-  </header>
-
-  <main class="container">
-    <section class="welcome-card">
-      <span>Welcome Friend</span>
-      <button type="button" id="closeWelcome" aria-label="Đóng">×</button>
-    </section>
-
-    <section class="license-card">
-      <div class="card-title">Create License</div>
-
-      <div class="card-content">
-        <div class="option-row">
-          <div class="option-icon">🎮</div>
-          <div class="option-value">Sent Tweaks</div>
-          <div class="option-arrow">⌄</div>
-        </div>
-
-        <div class="option-row">
-          <div class="option-icon">📱</div>
-          <div class="option-value">1</div>
-          <div class="option-addon">device</div>
-        </div>
-
-        <div class="option-row">
-          <div class="option-icon">📅</div>
-          <div class="option-value">1 Day</div>
-          <div class="option-arrow">⌄</div>
-        </div>
-
-        <div class="option-row">
-          <div class="option-icon">◇</div>
-          <div class="option-value">FREE</div>
-          <div class="option-arrow">⌄</div>
-        </div>
-
-        <p id="message" class="message" aria-live="polite"></p>
-
-        <div class="generate-area">
-          <button id="generateBtn" class="generate-button" type="button">
-            <span>⇥</span>
-            <span>Generate</span>
-          </button>
-        </div>
+  <main class="wrap">
+    <section class="hero">
+      <div class="logo-box">S</div>
+      <div class="hero-text">
+        <span class="badge">SENT TWEAKS</span>
+        <h1>Get Key 24H</h1>
+        <p>Nhấn tạo key, vượt Link4m và nhận key để đăng nhập ứng dụng.</p>
       </div>
     </section>
 
-    <section id="result" class="result-card hidden">
-      <div class="result-title">
-        <span>License Generated</span>
-        <span id="statusBadge" class="status-badge">ACTIVE</span>
+    <section class="card main-card">
+      <div class="card-title">
+        <div>
+          <span class="mini">TẠO KEY</span>
+          <h2>Lấy key nhanh</h2>
+        </div>
+      </div>
+
+      <div class="info-list">
+        <div class="info-row">
+          <span class="icon">🎮</span>
+          <div>
+            <small>Sản phẩm</small>
+            <strong>Sent Tweaks</strong>
+          </div>
+        </div>
+
+        <div class="info-row">
+          <span class="icon">📱</span>
+          <div>
+            <small>Giới hạn</small>
+            <strong>1 thiết bị</strong>
+          </div>
+        </div>
+
+        <div class="info-row">
+          <span class="icon">⏰</span>
+          <div>
+            <small>Thời hạn</small>
+            <strong>24 giờ</strong>
+          </div>
+        </div>
+      </div>
+
+      <p id="message" class="message" aria-live="polite"></p>
+
+      <button id="generateBtn" class="btn primary" type="button">
+        <span>⚡</span>
+        <span>Generate Key</span>
+      </button>
+    </section>
+
+    <section id="result" class="card result-card hidden">
+      <div class="card-title">
+        <div>
+          <span class="mini">KẾT QUẢ</span>
+          <h2>Key của bạn</h2>
+        </div>
+        <span id="statusBadge" class="status">ACTIVE</span>
       </div>
 
       <div class="key-box">
         <code id="keyValue">—</code>
       </div>
 
-      <div class="result-info">
-        <div>
-          <span>Thời hạn</span>
+      <div class="meta-grid">
+        <div class="meta-item">
+          <small>Thời hạn</small>
           <strong id="planValue">24 giờ</strong>
         </div>
-
-        <div>
-          <span>Hết hạn</span>
+        <div class="meta-item">
+          <small>Hết hạn</small>
           <strong id="expiresValue">—</strong>
         </div>
       </div>
 
-      <button id="copyBtn" class="copy-button" type="button">
-        Sao chép key
-      </button>
+      <button id="copyBtn" class="btn secondary" type="button">Sao chép key</button>
+    </section>
 
-      <p class="device-note">
-        Key sẽ tự liên kết với thiết bị khi đăng nhập lần đầu trong ứng dụng.
-      </p>
+    <section class="card steps-card">
+      <div class="card-title">
+        <div>
+          <span class="mini">HƯỚNG DẪN</span>
+          <h2>3 bước sử dụng</h2>
+        </div>
+      </div>
+
+      <ol class="steps">
+        <li>Nhấn <b>Generate Key</b></li>
+        <li>Hoàn thành bước vượt Link4m</li>
+        <li>Nhận key và dán vào app để đăng nhập</li>
+      </ol>
+    </section>
+
+    <section class="links-grid">
+      <a class="link-card tg" href="https://t.me/senttweakmodgame/1" target="_blank" rel="noopener">
+        <span>📨</span>
+        <div>
+          <strong>Telegram</strong>
+          <small>Box update & hỗ trợ</small>
+        </div>
+      </a>
+
+      <a class="link-card yt" href="https://youtube.com/@senttweaks" target="_blank" rel="noopener">
+        <span>▶️</span>
+        <div>
+          <strong>YouTube Admin</strong>
+          <small>Kênh hướng dẫn</small>
+        </div>
+      </a>
     </section>
 
     <footer>
-      Secure License System
+      <span>Sent Tweaks Get Key</span>
+      <span>Simple UI</span>
     </footer>
   </main>
 
