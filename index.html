@@ -3,80 +3,482 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0b1220">
+  <meta name="theme-color" content="#f7fbff">
+  <meta name="color-scheme" content="light">
   <title>Sent Tweaks Get Key</title>
-  <link rel="stylesheet" href="/style.css">
+  <style>
+    :root {
+      --bg: #f4f8ff;
+      --surface: rgba(255,255,255,.92);
+      --surface-solid: #ffffff;
+      --text: #182236;
+      --muted: #6d7890;
+      --line: #e5ebf5;
+      --blue: #407bff;
+      --blue-dark: #255de7;
+      --purple: #7a5cff;
+      --cyan: #2bbfec;
+      --green: #18a66a;
+      --green-soft: #e8f8f0;
+      --danger: #d9485f;
+      --shadow: 0 18px 50px rgba(57,85,145,.13);
+      --shadow-soft: 0 8px 24px rgba(57,85,145,.09);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: var(--text);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    html, body { margin: 0; min-height: 100%; }
+
+    body {
+      position: relative;
+      overflow-x: hidden;
+      background:
+        radial-gradient(circle at 4% 0%, rgba(64,123,255,.16), transparent 28%),
+        radial-gradient(circle at 96% 16%, rgba(122,92,255,.13), transparent 24%),
+        linear-gradient(180deg, #fbfdff 0%, var(--bg) 62%, #eef4ff 100%);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      opacity: .48;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(54,96,170,.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(54,96,170,.055) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: linear-gradient(to bottom, #000 0%, transparent 82%);
+    }
+
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+
+    .wrap {
+      width: min(100% - 24px, 760px);
+      margin: 0 auto;
+      padding: max(14px, env(safe-area-inset-top)) 0 calc(28px + env(safe-area-inset-bottom));
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 20px;
+      border: 1px solid rgba(209,220,240,.95);
+      border-radius: 26px;
+      background: linear-gradient(145deg, rgba(255,255,255,.98), rgba(247,250,255,.94));
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: 190px;
+      height: 190px;
+      right: -84px;
+      top: -112px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(64,123,255,.20), rgba(122,92,255,.14));
+      filter: blur(2px);
+    }
+
+    .logo {
+      position: relative;
+      z-index: 1;
+      width: 62px;
+      height: 62px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border-radius: 20px;
+      color: #fff;
+      font-size: 29px;
+      font-weight: 900;
+      letter-spacing: -.5px;
+      background: linear-gradient(135deg, var(--blue), var(--purple));
+      box-shadow: 0 14px 30px rgba(64,123,255,.30), inset 0 1px 0 rgba(255,255,255,.35);
+    }
+
+    .brand { position: relative; z-index: 1; min-width: 0; }
+    .brand small,
+    .eyebrow {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--blue-dark);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 1.15px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: clamp(24px, 5vw, 32px);
+      line-height: 1.08;
+      letter-spacing: -.65px;
+    }
+
+    .brand p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .card {
+      margin-top: 14px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: var(--surface);
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 23px;
+      line-height: 1.2;
+      letter-spacing: -.35px;
+    }
+
+    .subtitle {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 17px;
+    }
+
+    .info {
+      min-width: 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(180deg, #fff, #f9fbff);
+    }
+
+    .info-icon {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 11px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #edf3ff, #f2edff);
+      font-size: 20px;
+      box-shadow: inset 0 0 0 1px rgba(64,123,255,.08);
+    }
+
+    .info small,
+    .meta-item small {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      margin-bottom: 4px;
+    }
+
+    .info strong,
+    .meta-item strong {
+      display: block;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .message {
+      min-height: 21px;
+      margin: 14px 2px 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .message.success { color: var(--green); }
+    .message.error { color: var(--danger); }
+
+    .button {
+      width: 100%;
+      min-height: 52px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      border: 0;
+      border-radius: 17px;
+      padding: 14px 18px;
+      font-size: 15px;
+      font-weight: 900;
+      cursor: pointer;
+      transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+    }
+
+    .button:active { transform: scale(.985); }
+    .button:disabled { opacity: .62; cursor: not-allowed; transform: none; }
+
+    .primary {
+      margin-top: 11px;
+      color: #fff;
+      background: linear-gradient(135deg, var(--blue), var(--purple));
+      box-shadow: 0 13px 28px rgba(64,123,255,.25);
+    }
+
+    .primary:hover { filter: brightness(1.035); box-shadow: 0 15px 32px rgba(64,123,255,.30); }
+
+    .secondary {
+      margin-top: 13px;
+      color: var(--blue-dark);
+      border: 1px solid #dce6f8;
+      background: linear-gradient(180deg, #fff, #f4f8ff);
+      box-shadow: 0 8px 20px rgba(68,96,150,.08);
+    }
+
+    .status {
+      flex: 0 0 auto;
+      padding: 8px 11px;
+      border: 1px solid #bfe9d4;
+      border-radius: 999px;
+      color: #118455;
+      background: var(--green-soft);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .45px;
+    }
+
+    .key-box {
+      position: relative;
+      overflow: hidden;
+      margin-top: 16px;
+      padding: 19px 16px;
+      border: 1px dashed #a9bfe9;
+      border-radius: 18px;
+      text-align: center;
+      background: linear-gradient(135deg, #f7faff, #f5f2ff);
+    }
+
+    .key-box::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,.85) 50%, transparent 70%);
+      transform: translateX(-120%);
+      animation: shine 5s ease-in-out infinite;
+    }
+
+    @keyframes shine {
+      0%, 70% { transform: translateX(-120%); }
+      100% { transform: translateX(120%); }
+    }
+
+    .key-box code {
+      position: relative;
+      z-index: 1;
+      color: #17233a;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: clamp(15px, 4.2vw, 19px);
+      font-weight: 900;
+      line-height: 1.6;
+      letter-spacing: .35px;
+      overflow-wrap: anywhere;
+      user-select: all;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .meta-item {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fbfcff;
+    }
+
+    .steps {
+      display: grid;
+      gap: 11px;
+      margin: 17px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .steps li {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #536077;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .steps li::before {
+      content: counter(list-item);
+      width: 30px;
+      height: 30px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      color: var(--blue-dark);
+      background: #edf3ff;
+      font-size: 13px;
+      font-weight: 900;
+      box-shadow: inset 0 0 0 1px #dbe6fb;
+    }
+
+    .links {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .social {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      min-width: 0;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      text-decoration: none;
+      color: var(--text);
+      background: rgba(255,255,255,.86);
+      box-shadow: var(--shadow-soft);
+      transition: transform .18s ease, box-shadow .18s ease;
+    }
+
+    .social:active { transform: scale(.985); }
+
+    .social-icon {
+      width: 42px;
+      height: 42px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      font-size: 19px;
+      background: linear-gradient(135deg, #edf3ff, #f1edff);
+    }
+
+    .social strong { display: block; font-size: 14px; }
+    .social small {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 18px 4px 0;
+      color: #8893a8;
+      font-size: 11px;
+    }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 620px) {
+      .wrap { width: min(100% - 16px, 760px); padding-top: 9px; }
+      .hero, .card { border-radius: 21px; }
+      .hero { padding: 16px; }
+      .logo { width: 54px; height: 54px; border-radius: 17px; font-size: 25px; }
+      .brand h1 { font-size: 23px; }
+      .brand p { font-size: 12px; }
+      .card { padding: 17px; }
+      .info-grid { grid-template-columns: 1fr; }
+      .info { display: flex; align-items: center; gap: 12px; padding: 13px; }
+      .info-icon { margin-bottom: 0; }
+      .meta, .links { grid-template-columns: 1fr; }
+      h2 { font-size: 21px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
 </head>
 <body>
-  <div class="bg-blur blur-1"></div>
-  <div class="bg-blur blur-2"></div>
-
   <main class="wrap">
     <section class="hero">
-      <div class="logo-box">S</div>
-      <div class="hero-text">
-        <span class="badge">SENT TWEAKS</span>
+      <div class="logo">S</div>
+      <div class="brand">
+        <small>SENT TWEAKS</small>
         <h1>Get Key 24H</h1>
-        <p>Nhấn tạo key, vượt Link4m và nhận key để đăng nhập ứng dụng.</p>
+        <p>Tạo key nhanh, vượt Link4m và đăng nhập ứng dụng trên một thiết bị.</p>
       </div>
     </section>
 
-    <section class="card main-card">
-      <div class="card-title">
+    <section class="card">
+      <div class="title-row">
         <div>
-          <span class="mini">TẠO KEY</span>
-          <h2>Lấy key nhanh</h2>
+          <span class="eyebrow">TẠO LICENSE</span>
+          <h2>Nhận key của bạn</h2>
+          <p class="subtitle">Bấm nút bên dưới để bắt đầu quy trình lấy key 24 giờ.</p>
         </div>
       </div>
 
-      <div class="info-list">
-        <div class="info-row">
-          <span class="icon">🎮</span>
-          <div>
-            <small>Sản phẩm</small>
-            <strong>Sent Tweaks</strong>
-          </div>
+      <div class="info-grid">
+        <div class="info">
+          <div class="info-icon">🎮</div>
+          <div><small>Sản phẩm</small><strong>Sent Tweaks</strong></div>
         </div>
-
-        <div class="info-row">
-          <span class="icon">📱</span>
-          <div>
-            <small>Giới hạn</small>
-            <strong>1 thiết bị</strong>
-          </div>
+        <div class="info">
+          <div class="info-icon">📱</div>
+          <div><small>Giới hạn</small><strong>1 thiết bị</strong></div>
         </div>
-
-        <div class="info-row">
-          <span class="icon">⏰</span>
-          <div>
-            <small>Thời hạn</small>
-            <strong>24 giờ</strong>
-          </div>
+        <div class="info">
+          <div class="info-icon">⏱️</div>
+          <div><small>Thời hạn</small><strong>24 giờ</strong></div>
         </div>
       </div>
 
       <p id="message" class="message" aria-live="polite"></p>
-
-      <button id="generateBtn" class="btn primary" type="button">
-        <span>⚡</span>
-        <span>Generate Key</span>
-      </button>
+      <button id="generateBtn" class="button primary" type="button">⚡ Nhận key 24H</button>
     </section>
 
-    <section id="result" class="card result-card hidden">
-      <div class="card-title">
+    <section id="result" class="card hidden">
+      <div class="title-row">
         <div>
-          <span class="mini">KẾT QUẢ</span>
-          <h2>Key của bạn</h2>
+          <span class="eyebrow">LICENSE CỦA BẠN</span>
+          <h2>Key đã sẵn sàng</h2>
+          <p class="subtitle">Sao chép key rồi dán vào màn hình đăng nhập của ứng dụng.</p>
         </div>
         <span id="statusBadge" class="status">ACTIVE</span>
       </div>
 
-      <div class="key-box">
-        <code id="keyValue">—</code>
-      </div>
+      <div class="key-box"><code id="keyValue">—</code></div>
 
-      <div class="meta-grid">
+      <div class="meta">
         <div class="meta-item">
           <small>Thời hạn</small>
           <strong id="planValue">24 giờ</strong>
@@ -87,48 +489,36 @@
         </div>
       </div>
 
-      <button id="copyBtn" class="btn secondary" type="button">Sao chép key</button>
+      <button id="copyBtn" class="button secondary" type="button">📋 Sao chép key</button>
     </section>
 
-    <section class="card steps-card">
-      <div class="card-title">
-        <div>
-          <span class="mini">HƯỚNG DẪN</span>
-          <h2>3 bước sử dụng</h2>
-        </div>
-      </div>
-
+    <section class="card">
+      <span class="eyebrow">HƯỚNG DẪN</span>
+      <h2>3 bước sử dụng</h2>
       <ol class="steps">
-        <li>Nhấn <b>Generate Key</b></li>
-        <li>Hoàn thành bước vượt Link4m</li>
-        <li>Nhận key và dán vào app để đăng nhập</li>
+        <li>Nhấn <strong>Nhận key 24H</strong>.</li>
+        <li>Hoàn thành bước vượt Link4m.</li>
+        <li>Quay lại web, sao chép key và đăng nhập app.</li>
       </ol>
     </section>
 
-    <section class="links-grid">
-      <a class="link-card tg" href="https://t.me/senttweakmodgame/1" target="_blank" rel="noopener">
-        <span>📨</span>
-        <div>
-          <strong>Telegram</strong>
-          <small>Box update & hỗ trợ</small>
-        </div>
+    <section class="links">
+      <a class="social" href="https://t.me/senttweakmodgame/1" target="_blank" rel="noopener">
+        <div class="social-icon">✈️</div>
+        <div><strong>Telegram</strong><small>Box update và hỗ trợ</small></div>
       </a>
-
-      <a class="link-card yt" href="https://youtube.com/@senttweaks" target="_blank" rel="noopener">
-        <span>▶️</span>
-        <div>
-          <strong>YouTube Admin</strong>
-          <small>Kênh hướng dẫn</small>
-        </div>
+      <a class="social" href="https://youtube.com/@senttweaks" target="_blank" rel="noopener">
+        <div class="social-icon">▶️</div>
+        <div><strong>YouTube Admin</strong><small>Kênh hướng dẫn</small></div>
       </a>
     </section>
 
     <footer>
       <span>Sent Tweaks Get Key</span>
-      <span>Simple UI</span>
+      <span>Powered by Cloudflare</span>
     </footer>
   </main>
 
-  <script src="/app.js" defer></script>
+  <script src="/app.js?v=4" defer></script>
 </body>
 </html>
