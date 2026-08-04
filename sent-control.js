@@ -21,47 +21,7 @@
   }
 
   function cleanKey(value) {
-    return String(value || "")
-      .trim()
-      .toUpperCase()
-      .replace(/\s+/g, "");
-  }
-
-  /*
-   * Database/API vẫn dùng SENT làm định dạng chuẩn.
-   * Trang admin có thể hiển thị và sao chép alias SUNNY.
-   */
-  function toCanonicalSentKey(value) {
-    let key = cleanKey(value);
-
-    while (key.startsWith("SUNNY-")) {
-      key = key.slice("SUNNY-".length);
-    }
-
-    if (
-      /^[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)
-    ) {
-      return `SENT-${key}`;
-    }
-
-    return key;
-  }
-
-  function formatAdminKey(value, format) {
-    const canonical = toCanonicalSentKey(value);
-
-    if (
-      format === "SUNNY" &&
-      canonical.startsWith("SENT-")
-    ) {
-      return `SUNNY-${canonical.slice("SENT-".length)}`;
-    }
-
-    return canonical;
-  }
-
-  function visibleKey(item) {
-    return item.displayKey || item.key;
+    return String(value || "").trim().toUpperCase();
   }
 
   async function adminApi(path, body) {
@@ -137,7 +97,7 @@
       main.className = "key-main";
 
       const code = document.createElement("code");
-      code.textContent = visibleKey(item);
+      code.textContent = item.key;
 
       const meta = document.createElement("span");
       meta.textContent = `${item.planHours || 24} giờ • ${String(item.status || "ACTIVE").toUpperCase()}`;
@@ -147,7 +107,7 @@
       button.className = "copy-one";
       button.textContent = "Sao chép";
       button.addEventListener("click", async () => {
-        await copyText(visibleKey(item));
+        await copyText(item.key);
         button.textContent = "Đã chép ✓";
         setTimeout(() => button.textContent = "Sao chép", 1200);
       });
@@ -191,9 +151,10 @@
   $("createBtn").addEventListener("click", async () => {
     const button = $("createBtn");
     const planHours = Number($("planHours").value);
-    const keyFormat = $("keyFormat").value === "SUNNY"
-      ? "SUNNY"
-      : "SENT";
+    const keyFormat =
+      $("keyFormat").value === "SUNNY"
+        ? "SUNNY"
+        : "SENT";
     const count = Math.max(1, Math.min(20, Number($("keyCount").value) || 1));
 
     button.disabled = true;
@@ -204,13 +165,14 @@
 
       // API hiện tại tạo một key mỗi lần. Gọi tuần tự để tránh dồn quá nhiều request.
       for (let index = 0; index < count; index += 1) {
-        const result = await adminApi("/api/admin/create-key", { planHours });
-
-        newItems.push({
-          ...result.data,
-          canonicalKey: toCanonicalSentKey(result.data.key),
-          displayKey: formatAdminKey(result.data.key, keyFormat)
-        });
+        const result = await adminApi(
+          "/api/admin/create-key",
+          {
+            planHours,
+            keyFormat
+          }
+        );
+        newItems.push(result.data);
       }
 
       createdKeys = [...newItems, ...createdKeys];
@@ -228,7 +190,7 @@
 
   copyAllBtn.addEventListener("click", async () => {
     if (!createdKeys.length) return;
-    await copyText(createdKeys.map(visibleKey).join("\n"));
+    await copyText(createdKeys.map((item) => item.key).join("\n"));
     copyAllBtn.textContent = "Đã sao chép ✓";
     setTimeout(() => copyAllBtn.textContent = "Sao chép tất cả", 1300);
   });
@@ -251,14 +213,7 @@
         throw new Error("Không tìm thấy key hoặc key đã bị thu hồi.");
       }
 
-      const canonicalRevoked = toCanonicalSentKey(key);
-
-      createdKeys = createdKeys.filter(
-        (item) =>
-          toCanonicalSentKey(
-            item.canonicalKey || item.key
-          ) !== canonicalRevoked
-      );
+      createdKeys = createdKeys.filter((item) => item.key !== key);
       renderKeys();
       $("revokeKey").value = "";
       setMessage(revokeMessage, "Đã thu hồi key thành công.", "success");
@@ -293,4 +248,4 @@
 
   renderKeys();
 })();
-                                 
+        
