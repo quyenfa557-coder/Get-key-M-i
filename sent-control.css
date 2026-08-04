@@ -68,7 +68,7 @@ button,input,select{font:inherit}
 .message.success{color:#86efac}
 .message.error{color:#fca5a5}
 .dashboard-grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:18px}
-.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}
+.form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:18px}
 .form-grid .field{margin-top:0}
 .row-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .empty-state{min-height:180px;border:1px dashed rgba(148,163,184,.25);border-radius:18px;
