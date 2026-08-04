@@ -1,15 +1,12 @@
 {
-  "name": "senttweaks-getkey-cloudflare",
-  "version": "1.0.0",
+  "name": "sent-tweaks-auth-worker",
   "private": true,
-  "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:local": "wrangler d1 migrations apply DB --local",
-    "db:remote": "wrangler d1 migrations apply DB --remote"
+    "migrate": "wrangler d1 migrations apply DB --remote",
+    "dev": "wrangler dev"
   },
   "devDependencies": {
-    "wrangler": "^4.26.0"
+    "wrangler": "^4.0.0"
   }
 }
