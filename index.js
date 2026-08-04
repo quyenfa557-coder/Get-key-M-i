@@ -57,20 +57,49 @@ function normalizePlan(value) {
 }
 
 function normalizeKey(value) {
-  let key = String(value || "")
-    .trim()
-    .toUpperCase();
+  let key = String(value ?? "")
+    .toUpperCase()
+    .replace(/\u0000/g, "")
+    .replace(/[‐-‒–—−]/g, "-")
+    .replace(/\s+/g, "")
+    .trim();
 
-  if (key.startsWith("SUNNY-SENT-")) {
+  /*
+   * Libloader gốc tự thêm SUNNY- trước key.
+   * Xóa được cả trường hợp tiền tố bị lặp.
+   */
+  while (key.startsWith("SUNNY-")) {
     key = key.slice("SUNNY-".length);
-  } else if (key.startsWith("SUNNY-")) {
-    key = `SENT-${key.slice("SUNNY-".length)}`;
+  }
+
+  /*
+   * SUNNY-AAAAA-BBBBB-CCCCC
+   * sau khi bỏ SUNNY- sẽ còn AAAAA-BBBBB-CCCCC.
+   */
+  if (
+    /^[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)
+  ) {
+    key = `SENT-${key}`;
+  }
+
+  /*
+   * Chỉ lấy phần key hợp lệ nếu có ký tự thừa
+   * do copy/paste hoặc wrapper của client.
+   */
+  const match = key.match(
+    /SENT-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}/
+  );
+
+  if (match) {
+    key = match[0];
   }
 
   if (
     !/^SENT-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)
   ) {
-    throw new Error("Key không đúng định dạng.");
+    throw new Error(
+      "Key không đúng định dạng. Dạng đúng: SENT-XXXXX-XXXXX-XXXXX"
+    );
   }
 
   return key;
@@ -448,7 +477,7 @@ async function handleLink4mStart(
 
     throw error;
   }
-}
+        }
 
 function handleLink4mLanding(request) {
   const url =
@@ -755,278 +784,6 @@ function authPositiveInteger(
   return fallback;
 }
 
-/*
- * =====================================================
- * SENT AUTH — ECDSA P-256 SERVER SIGNING
- *
- * Cloudflare Secret:
- * SENT_AUTH_PRIVATE_KEY_PEM
- * =====================================================
- */
-
-let authSigningKeyPromise = null;
-let authSigningKeyPem = "";
-
-function authPemToPkcs8(pemValue) {
-  const base64 = String(pemValue || "")
-    .replace(
-      /-----BEGIN PRIVATE KEY-----/g,
-      ""
-    )
-    .replace(
-      /-----END PRIVATE KEY-----/g,
-      ""
-    )
-    .replace(/\s+/g, "");
-
-  if (!base64) {
-    throw new Error(
-      "Thiếu Secret SENT_AUTH_PRIVATE_KEY_PEM."
-    );
-  }
-
-  const binary = atob(base64);
-
-  const bytes =
-    new Uint8Array(binary.length);
-
-  for (
-    let index = 0;
-    index < binary.length;
-    index++
-  ) {
-    bytes[index] =
-      binary.charCodeAt(index);
-  }
-
-  return bytes;
-}
-
-async function authGetSigningKey(env) {
-  const pem =
-    String(
-      env.SENT_AUTH_PRIVATE_KEY_PEM || ""
-    ).trim();
-
-  if (!pem) {
-    throw new Error(
-      "Worker chưa cấu hình SENT_AUTH_PRIVATE_KEY_PEM."
-    );
-  }
-
-  if (
-    !authSigningKeyPromise ||
-    authSigningKeyPem !== pem
-  ) {
-    authSigningKeyPem = pem;
-
-    authSigningKeyPromise =
-      crypto.subtle.importKey(
-        "pkcs8",
-
-        authPemToPkcs8(pem),
-
-        {
-          name: "ECDSA",
-          namedCurve: "P-256"
-        },
-
-        false,
-
-        ["sign"]
-      );
-  }
-
-  return authSigningKeyPromise;
-}
-
-function authConcatBytes(...parts) {
-  const total =
-    parts.reduce(
-      (sum, part) =>
-        sum + part.length,
-      0
-    );
-
-  const output =
-    new Uint8Array(total);
-
-  let offset = 0;
-
-  for (const part of parts) {
-    output.set(part, offset);
-    offset += part.length;
-  }
-
-  return output;
-}
-
-function authDerInteger(raw) {
-  let start = 0;
-
-  while (
-    start < raw.length - 1 &&
-    raw[start] === 0
-  ) {
-    start++;
-  }
-
-  let value =
-    raw.slice(start);
-
-  if ((value[0] & 0x80) !== 0) {
-    const prefixed =
-      new Uint8Array(
-        value.length + 1
-      );
-
-    prefixed[0] = 0;
-    prefixed.set(value, 1);
-    value = prefixed;
-  }
-
-  return authConcatBytes(
-    Uint8Array.of(
-      0x02,
-      value.length
-    ),
-    value
-  );
-}
-
-function authP1363ToDer(rawSignature) {
-  if (rawSignature.length !== 64) {
-    throw new Error(
-      "Chữ ký ECDSA P-256 thô không dài 64 byte."
-    );
-  }
-
-  const derR =
-    authDerInteger(
-      rawSignature.slice(0, 32)
-    );
-
-  const derS =
-    authDerInteger(
-      rawSignature.slice(32, 64)
-    );
-
-  const body =
-    authConcatBytes(
-      derR,
-      derS
-    );
-
-  return authConcatBytes(
-    Uint8Array.of(
-      0x30,
-      body.length
-    ),
-    body
-  );
-}
-
-function authBytesToBase64(bytes) {
-  let binary = "";
-
-  for (
-    let index = 0;
-    index < bytes.length;
-    index += 0x4000
-  ) {
-    binary +=
-      String.fromCharCode(
-        ...bytes.subarray(
-          index,
-          index + 0x4000
-        )
-      );
-  }
-
-  return btoa(binary);
-}
-
-function authBuildSignedPayload(lease) {
-  return [
-    "SENT-AUTH-V1",
-
-    `server_time=${lease.server_time}`,
-
-    `server_sig_alg=${lease.server_sig_alg}`,
-
-    `product_id=${lease.product_id}`,
-
-    `session_id=${lease.session_id}`,
-
-    `feature_seed=${lease.feature_seed}`,
-
-    `capability_nonce=${lease.capability_nonce}`,
-
-    `session_expires_at=${lease.session_expires_at}`,
-
-    `session_generation=${lease.session_generation}`,
-
-    `exp_generation=${lease.exp_generation}`,
-
-    `build_not_before=${lease.build_not_before}`,
-
-    `build_expires_at=${lease.build_expires_at}`,
-
-    `capability_expires_at=${lease.capability_expires_at}`,
-
-    `device_key_bound=${
-      lease.device_key_bound ? 1 : 0
-    }`,
-
-    `max_devices=${lease.max_devices}`,
-
-    `started=${
-      lease.started ? 1 : 0
-    }`,
-
-    `started_at=${lease.started_at}`,
-
-    `remaining_seconds=${lease.remaining_seconds}`
-  ].join("\n");
-}
-
-async function authSignLease(
-  env,
-  lease
-) {
-  const signingKey =
-    await authGetSigningKey(env);
-
-  const payload =
-    authBuildSignedPayload(lease);
-
-  const raw =
-    new Uint8Array(
-      await crypto.subtle.sign(
-        {
-          name: "ECDSA",
-          hash: "SHA-256"
-        },
-
-        signingKey,
-
-        new TextEncoder().encode(
-          payload
-        )
-      )
-    );
-
-  const der =
-    authP1363ToDer(raw);
-
-  return {
-    payload,
-
-    signature:
-      authBytesToBase64(der)
-  };
-}
-
 function authIsLegacyClient(request) {
   const userAgent =
     request.headers.get(
@@ -1096,9 +853,8 @@ async function authReadResponse(
   }
 }
 
-async function authBuildLegacySuccess(
-  modernPayload,
-  env
+function authBuildLegacySuccess(
+  modernPayload
 ) {
   const data =
     authIsObject(modernPayload.data)
@@ -1119,9 +875,14 @@ async function authBuildLegacySuccess(
   const expiresAt =
     now + remainingSeconds;
 
-  const lease = {
-    server_time:
-      now,
+  return {
+    ...modernPayload,
+
+    ok: true,
+    valid: true,
+    msg: "OK",
+
+    server_time: now,
 
     server_sig_alg:
       LEGACY_SIG_ALG,
@@ -1138,14 +899,15 @@ async function authBuildLegacySuccess(
     capability_nonce:
       authRandomHex(32),
 
+    server_sig:
+      "SENT_AUTH_COMPAT",
+
     session_expires_at:
       expiresAt,
 
-    session_generation:
-      1,
+    session_generation: 1,
 
-    exp_generation:
-      1,
+    exp_generation: 1,
 
     build_not_before:
       now - 300,
@@ -1159,40 +921,14 @@ async function authBuildLegacySuccess(
     device_key_bound:
       Boolean(data.bound),
 
-    max_devices:
-      1,
+    max_devices: 1,
 
-    started:
-      true,
+    started: true,
 
-    started_at:
-      now,
+    started_at: now,
 
     remaining_seconds:
       remainingSeconds
-  };
-
-  const signed =
-    await authSignLease(
-      env,
-      lease
-    );
-
-  return {
-    ...modernPayload,
-    ...lease,
-
-    ok:
-      true,
-
-    valid:
-      true,
-
-    msg:
-      "OK",
-
-    server_sig:
-      signed.signature
   };
     }
 
@@ -1339,12 +1075,10 @@ async function handleClaim(
   return json({
     ok: true,
     valid: true,
-
-    data:
-      publicKeyRow(
-        fresh,
-        now
-      )
+    data: publicKeyRow(
+      fresh,
+      now
+    )
   });
 }
 
@@ -1426,17 +1160,15 @@ async function handleDualSchemaClaim(
       request.url,
       {
         method: "POST",
-
         headers,
 
-        body:
-          JSON.stringify({
-            key:
-              normalized.key,
+        body: JSON.stringify({
+          key:
+            normalized.key,
 
-            deviceId:
-              normalized.deviceId
-          })
+          deviceId:
+            normalized.deviceId
+        })
       }
     );
 
@@ -1494,28 +1226,24 @@ async function handleDualSchemaClaim(
       {
         ...payload,
 
-        msg:
-          String(
-            payload.error ||
-            payload.message ||
-            "INVALID_KEY"
-          )
+        msg: String(
+          payload.error ||
+          payload.message ||
+          "INVALID_KEY"
+        )
       },
       modernResponse.status
     );
   }
 
-  const signedPayload =
-    await authBuildLegacySuccess(
-      payload,
-      env
-    );
-
   return json(
-    signedPayload,
+    authBuildLegacySuccess(
+      payload
+    ),
     200
   );
-    }
+        }
+
 
 /*
  * =====================================================
@@ -1571,12 +1299,10 @@ async function handleVerify(
       ok: true,
       valid: false,
       reason: "revoked",
-
-      data:
-        publicKeyRow(
-          row,
-          now
-        )
+      data: publicKeyRow(
+        row,
+        now
+      )
     });
   }
 
@@ -1587,12 +1313,10 @@ async function handleVerify(
       ok: true,
       valid: false,
       reason: "expired",
-
-      data:
-        publicKeyRow(
-          row,
-          now
-        )
+      data: publicKeyRow(
+        row,
+        now
+      )
     });
   }
 
@@ -1601,12 +1325,10 @@ async function handleVerify(
       ok: true,
       valid: false,
       reason: "not_claimed",
-
-      data:
-        publicKeyRow(
-          row,
-          now
-        )
+      data: publicKeyRow(
+        row,
+        now
+      )
     });
   }
 
@@ -1623,12 +1345,10 @@ async function handleVerify(
   return json({
     ok: true,
     valid: true,
-
-    data:
-      publicKeyRow(
-        row,
-        now
-      )
+    data: publicKeyRow(
+      row,
+      now
+    )
   });
 }
 
@@ -1640,8 +1360,7 @@ async function handleRevoke(
     return json(
       {
         ok: false,
-        error:
-          "Không có quyền."
+        error: "Không có quyền."
       },
       401
     );
@@ -1664,7 +1383,6 @@ async function handleRevoke(
 
   return json({
     ok: true,
-
     changed:
       result.meta.changes
   });
@@ -1728,7 +1446,6 @@ async function route(
     return json(
       {
         ok: false,
-
         error:
           "Bạn cần vượt Link4m để nhận key."
       },
@@ -1795,7 +1512,6 @@ async function route(
     return json(
       {
         ok: false,
-
         error:
           "Không tìm thấy API."
       },
