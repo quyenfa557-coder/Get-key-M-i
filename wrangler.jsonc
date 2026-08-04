@@ -8,6 +8,11 @@
     "binding": "ASSETS",
     "run_worker_first": [
       "/api/*",
+      "/auth",
+      "/login",
+      "/verify",
+      "/check",
+      "/license/*",
       "/senttwgetkey",
       "/senttwnhankey"
     ]
