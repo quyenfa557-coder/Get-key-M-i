@@ -58,26 +58,23 @@ function normalizePlan(value) {
 
 
 function normalizeKeyFormat(value) {
-  const format = String(value || "SENT")
+  return String(value || "")
     .trim()
-    .toUpperCase();
-
-  return format === "SUNNY"
-    ? "SUNNY"
-    : "SENT";
+    .toUpperCase() === "SUNNY"
+      ? "SUNNY"
+      : "SENT";
 }
 
 function normalizeKey(value) {
   let key = String(value ?? "")
+    .trim()
     .toUpperCase()
     .replace(/\u0000/g, "")
     .replace(/[‐‑‒–—−]/g, "-")
-    .replace(/\s+/g, "")
-    .trim();
+    .replace(/\s+/g, "");
 
   /*
-   * Libloader có thể tự thêm SUNNY-.
-   *
+   * Libloader có thể tự thêm SUNNY- vào key đã có SUNNY-:
    * SUNNY-SUNNY-7K9P-H38Q-Z52N
    * → SUNNY-7K9P-H38Q-Z52N
    */
@@ -86,8 +83,7 @@ function normalizeKey(value) {
   }
 
   /*
-   * Libloader có thể bọc key SENT:
-   *
+   * Libloader bọc key SENT:
    * SUNNY-SENT-ABCDE-FGHIJ-KLMNO
    * → SENT-ABCDE-FGHIJ-KLMNO
    */
@@ -96,42 +92,32 @@ function normalizeKey(value) {
   }
 
   /*
-   * Cho phép nhập phần thân SUNNY:
-   * 7K9P-H38Q-Z52N
+   * Cho phép phần thân không có tiền tố.
    */
-  if (
-    /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(key)
-  ) {
+  if (/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(key)) {
     key = `SUNNY-${key}`;
-  }
-
-  /*
-   * Cho phép nhập phần thân SENT:
-   * ABCDE-FGHIJ-KLMNO
-   */
-  if (
+  } else if (
     /^[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)
   ) {
     key = `SENT-${key}`;
   }
 
-  const isSent =
-    /^SENT-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key);
-
-  const isSunny =
+  const validSunny =
     /^SUNNY-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(key);
 
-  if (!isSent && !isSunny) {
+  const validSent =
+    /^SENT-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key);
+
+  if (!validSunny && !validSent) {
     throw new Error(
-      "Key không đúng định dạng. Dùng SENT-XXXXX-XXXXX-XXXXX hoặc SUNNY-XXXX-XXXX-XXXX."
+      "Key không đúng định dạng. Dùng SUNNY-XXXX-XXXX-XXXX hoặc SENT-XXXXX-XXXXX-XXXXX."
     );
   }
 
   return key;
 }
 
-
-function normalizeSessionToken(value) {function normalizeSessionToken(value) {
+function normalizeSessionToken(value) {
   const token = String(value || "").trim();
 
   if (!/^[A-Za-z0-9_-]{40,100}$/.test(token)) {
@@ -168,7 +154,7 @@ function createKey(keyFormat = "SENT") {
   return `SENT-${randomPart(5)}-${randomPart(5)}-${randomPart(5)}`;
 }
 
-function randomToken(byteLength = 32) {function randomToken(byteLength = 32) {
+function randomToken(byteLength = 32) {
   const bytes = new Uint8Array(byteLength);
 
   crypto.getRandomValues(bytes);

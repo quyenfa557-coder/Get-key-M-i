@@ -151,11 +151,19 @@
   $("createBtn").addEventListener("click", async () => {
     const button = $("createBtn");
     const planHours = Number($("planHours").value);
+
     const keyFormat =
       $("keyFormat").value === "SUNNY"
         ? "SUNNY"
         : "SENT";
-    const count = Math.max(1, Math.min(20, Number($("keyCount").value) || 1));
+
+    const count = Math.max(
+      1,
+      Math.min(
+        20,
+        Number($("keyCount").value) || 1
+      )
+    );
 
     button.disabled = true;
     setMessage(createMessage, `Đang tạo ${count} key...`);
@@ -248,4 +256,3 @@
 
   renderKeys();
 })();
-        
