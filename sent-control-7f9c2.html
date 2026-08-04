@@ -68,6 +68,14 @@
             </label>
 
             <label class="field">
+              <span>Định dạng hiển thị</span>
+              <select id="keyFormat">
+                <option value="SENT">SENT-XXXXX-XXXXX-XXXXX</option>
+                <option value="SUNNY">SUNNY-XXXXX-XXXXX-XXXXX</option>
+              </select>
+            </label>
+
+            <label class="field">
               <span>Số lượng</span>
               <input id="keyCount" type="number" min="1" max="20" value="1">
             </label>
@@ -109,7 +117,7 @@
 
         <div class="revoke-row">
           <input id="revokeKey" type="text"
-                 placeholder="SENT-XXXXX-XXXXX-XXXXX"
+                 placeholder="SENT-... hoặc SUNNY-..."
                  autocomplete="off">
           <button id="revokeBtn" class="danger" type="button">Thu hồi</button>
         </div>
