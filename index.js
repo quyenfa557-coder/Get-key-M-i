@@ -56,21 +56,43 @@ function normalizePlan(value) {
   return plan;
 }
 
+
 function normalizeKey(value) {
-  const key = String(value || "")
+  let key = String(value || "")
     .trim()
     .toUpperCase();
 
+  /*
+   * Menu tự thêm SUNNY- vào key SENT:
+   * SUNNY-SENT-XXXXX-XXXXX-XXXXX
+   * → SENT-XXXXX-XXXXX-XXXXX
+   */
+  if (key.startsWith("SUNNY-SENT-")) {
+    key = key.slice("SUNNY-".length);
+  }
+
+  /*
+   * Menu gửi dạng:
+   * SUNNY-XXXXX-XXXXX-XXXXX
+   * → SENT-XXXXX-XXXXX-XXXXX
+   */
+  else if (key.startsWith("SUNNY-")) {
+    key = `SENT-${key.slice("SUNNY-".length)}`;
+  }
+
+  /*
+   * Website/Login.h gửi thẳng:
+   * SENT-XXXXX-XXXXX-XXXXX
+   */
   if (
-    !/^SENT-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(
-      key
-    )
+    !/^SENT-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)
   ) {
     throw new Error("Key không đúng định dạng.");
   }
 
   return key;
 }
+
 
 function normalizeSessionToken(value) {
   const token = String(value || "").trim();
