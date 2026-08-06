@@ -189,6 +189,215 @@ async function sha256(text) {
 }
 
 
+
+/*
+ * =====================================================
+ * SENT AUTH V3 — SIGNED LICENSE RESPONSES
+ * =====================================================
+ * AUTH_PRIVATE_KEY_PEM must be a Cloudflare Secret containing
+ * an RSA PKCS#8 private key. The matching public key is embedded
+ * in Login.h. Never commit the private key to GitHub.
+ */
+const AUTH_RESPONSE_PROTOCOL = 3;
+const AUTH_RESPONSE_KEY_ID = "sent-auth-rsa-2026-08";
+const AUTH_MAX_CLOCK_SKEW_MS = 10 * 60 * 1000;
+
+let authPrivateKeyCache = null;
+let authPrivateKeySource = "";
+
+function authBase64UrlEncode(bytes) {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function authPemToBytes(pemText) {
+  const normalized = String(pemText || "")
+    .replace(/\\n/g, "\n")
+    .trim();
+
+  const base64 = normalized
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\s+/g, "");
+
+  if (!base64) {
+    throw new Error("AUTH_PRIVATE_KEY_PEM không hợp lệ.");
+  }
+
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function authGetPrivateKey(env) {
+  const pem = String(env.AUTH_PRIVATE_KEY_PEM || "").trim();
+  if (!pem) {
+    throw new Error("Máy chủ chưa cấu hình AUTH_PRIVATE_KEY_PEM.");
+  }
+
+  if (authPrivateKeyCache && authPrivateKeySource === pem) {
+    return authPrivateKeyCache;
+  }
+
+  const keyBytes = authPemToBytes(pem);
+  authPrivateKeyCache = await crypto.subtle.importKey(
+    "pkcs8",
+    keyBytes,
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      hash: "SHA-256"
+    },
+    false,
+    ["sign"]
+  );
+  authPrivateKeySource = pem;
+  return authPrivateKeyCache;
+}
+
+function normalizeAuthNonce(value) {
+  const nonce = String(value || "").trim().toLowerCase();
+  if (!/^[a-f0-9]{48}$/.test(nonce)) {
+    throw new Error("Nonce xác thực không hợp lệ.");
+  }
+  return nonce;
+}
+
+function normalizeAuthClientTime(value) {
+  const clientTimeMs = Number(value);
+  if (!Number.isSafeInteger(clientTimeMs) || clientTimeMs <= 0) {
+    throw new Error("Thời gian client không hợp lệ.");
+  }
+
+  if (Math.abs(Date.now() - clientTimeMs) > AUTH_MAX_CLOCK_SKEW_MS) {
+    throw new Error("Đồng hồ thiết bị lệch quá nhiều.");
+  }
+  return clientTimeMs;
+}
+
+function normalizeAuthProtocol(value) {
+  const protocolVersion = Number(value);
+  if (protocolVersion !== AUTH_RESPONSE_PROTOCOL) {
+    throw new Error("Phiên bản xác thực không được hỗ trợ.");
+  }
+  return protocolVersion;
+}
+
+function readAuthRequestMetadata(body) {
+  return {
+    nonce: normalizeAuthNonce(body.nonce),
+    clientTimeMs: normalizeAuthClientTime(body.clientTimeMs),
+    protocolVersion: normalizeAuthProtocol(body.protocolVersion)
+  };
+}
+
+function authCanonicalPayload({
+  endpoint,
+  nonce,
+  key,
+  deviceDigest,
+  valid,
+  status,
+  bound,
+  planHours,
+  expiresAtMs,
+  serverTimeMs
+}) {
+  return [
+    "SENT-AUTH-V3",
+    `endpoint=${endpoint}`,
+    `nonce=${nonce}`,
+    `key=${key}`,
+    `deviceDigest=${deviceDigest}`,
+    `valid=${valid ? 1 : 0}`,
+    `status=${status}`,
+    `bound=${bound ? 1 : 0}`,
+    `planHours=${planHours}`,
+    `expiresAtMs=${expiresAtMs}`,
+    `serverTimeMs=${serverTimeMs}`
+  ].join("\n");
+}
+
+async function authSignPayload(env, canonicalPayload) {
+  const privateKey = await authGetPrivateKey(env);
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    privateKey,
+    new TextEncoder().encode(canonicalPayload)
+  );
+  return authBase64UrlEncode(new Uint8Array(signature));
+}
+
+async function withSignedAuthResponse(
+  env,
+  endpoint,
+  requestMetadata,
+  deviceId,
+  payload
+) {
+  if (
+    !payload ||
+    payload.ok !== true ||
+    payload.valid !== true ||
+    !payload.data
+  ) {
+    return payload;
+  }
+
+  const serverTimeMs = Date.now();
+  const deviceDigest = await sha256(deviceId);
+  const expiresAtMs = Number(
+    payload.data.expiresAtMs ?? Date.parse(payload.data.expiresAt)
+  );
+
+  if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= serverTimeMs) {
+    throw new Error("Dữ liệu thời hạn license không hợp lệ.");
+  }
+
+  const data = {
+    ...payload.data,
+    expiresAtMs
+  };
+
+  const canonical = authCanonicalPayload({
+    endpoint,
+    nonce: requestMetadata.nonce,
+    key: String(data.key || ""),
+    deviceDigest,
+    valid: true,
+    status: String(data.status || ""),
+    bound: Boolean(data.bound),
+    planHours: Number(data.planHours || 0),
+    expiresAtMs,
+    serverTimeMs
+  });
+
+  const signature = await authSignPayload(env, canonical);
+
+  return {
+    ...payload,
+    data,
+    auth: {
+      protocolVersion: AUTH_RESPONSE_PROTOCOL,
+      keyId: AUTH_RESPONSE_KEY_ID,
+      endpoint,
+      nonce: requestMetadata.nonce,
+      deviceDigest,
+      serverTimeMs,
+      signature
+    }
+  };
+}
+
 async function deviceHash(env, deviceId) {
   const salt =
     env.DEVICE_SALT ||
@@ -395,6 +604,8 @@ function publicKeyRow(row, now = Date.now()) {
 
     expiresAt:
       new Date(expiresAt).toISOString(),
+
+    expiresAtMs: expiresAt,
 
     remainingSeconds:
       Math.max(
@@ -1126,9 +1337,34 @@ function authNormalizeBody(
       ])
     );
 
+  const nonce =
+    authFindString(
+      originalBody,
+      new Set([
+        "nonce",
+        "requestnonce",
+        "request_nonce"
+      ])
+    );
+
+  const clientTimeMs = Number(
+    originalBody?.clientTimeMs ??
+    originalBody?.client_time_ms ??
+    0
+  );
+
+  const protocolVersion = Number(
+    originalBody?.protocolVersion ??
+    originalBody?.protocol_version ??
+    0
+  );
+
   return {
     key,
-    deviceId
+    deviceId,
+    nonce,
+    clientTimeMs,
+    protocolVersion
   };
 }
 
@@ -1246,6 +1482,9 @@ async function handleClaim(
   const body =
     await readJson(request);
 
+  const requestMetadata =
+    readAuthRequestMetadata(body);
+
   const key =
     normalizeKey(body.key);
 
@@ -1329,19 +1568,26 @@ async function handleClaim(
     );
   }
 
-  const fresh =
-    claimResult.row;
-
-  return json({
+  const fresh = claimResult.row;
+  const payload = {
     ok: true,
     valid: true,
     data: publicKeyRow(
       fresh,
       now
     )
-  });
-}
+  };
 
+  return json(
+    await withSignedAuthResponse(
+      env,
+      "/api/claim",
+      requestMetadata,
+      deviceId,
+      payload
+    )
+  );
+}
 
 
 async function handleDualSchemaClaim(
@@ -1409,6 +1655,36 @@ async function handleDualSchemaClaim(
 
   
 
+  const legacyClient =
+    authIsLegacyClient(request);
+
+  if (
+    !legacyClient &&
+    (
+      !normalized.nonce ||
+      !normalized.clientTimeMs ||
+      normalized.protocolVersion !== AUTH_RESPONSE_PROTOCOL
+    )
+  ) {
+    return json(
+      {
+        ok: false,
+        valid: false,
+        error: "AUTH_V3_FIELDS_REQUIRED"
+      },
+      400
+    );
+  }
+
+  const forwardedNonce =
+    normalized.nonce || authRandomHex(24);
+
+  const forwardedClientTimeMs =
+    normalized.clientTimeMs || Date.now();
+
+  const forwardedProtocolVersion =
+    normalized.protocolVersion || AUTH_RESPONSE_PROTOCOL;
+
   const headers =
     new Headers(
       request.headers
@@ -1435,7 +1711,16 @@ async function handleDualSchemaClaim(
             normalized.key,
 
           deviceId:
-            normalized.deviceId
+            normalized.deviceId,
+
+          nonce:
+            forwardedNonce,
+
+          clientTimeMs:
+            forwardedClientTimeMs,
+
+          protocolVersion:
+            forwardedProtocolVersion
         })
       }
     );
@@ -1481,7 +1766,7 @@ const modernResponse =
    * Trả nguyên response hiện tại.
    */
   if (
-    !authIsLegacyClient(request)
+    !legacyClient
   ) {
     return json(
       payload,
@@ -1538,6 +1823,9 @@ async function handleVerify(
   const body =
     await readJson(request);
 
+  const requestMetadata =
+    readAuthRequestMetadata(body);
+
   const key =
     normalizeKey(body.key);
 
@@ -1552,8 +1840,7 @@ async function handleVerify(
       deviceId
     );
 
-  const now =
-    Date.now();
+  const now = Date.now();
 
   const row =
     await env.DB.prepare(
@@ -1572,46 +1859,32 @@ async function handleVerify(
     });
   }
 
-  if (
-    row.status === "revoked"
-  ) {
+  if (row.status === "revoked") {
     return json({
       ok: true,
       valid: false,
       reason: "revoked",
-      data: publicKeyRow(
-        row,
-        now
-      )
+      data: publicKeyRow(row, now)
     });
   }
 
-  if (
-    now >= Number(row.expires_at)
-  ) {
+  if (now >= Number(row.expires_at)) {
     return json({
       ok: true,
       valid: false,
       reason: "expired",
-      data: publicKeyRow(
-        row,
-        now
-      )
+      data: publicKeyRow(row, now)
     });
   }
 
-  const binding =
-    deviceBindingInfo(row);
+  const binding = deviceBindingInfo(row);
 
   if (!binding.bound) {
     return json({
       ok: true,
       valid: false,
       reason: "not_claimed",
-      data: publicKeyRow(
-        row,
-        now
-      )
+      data: publicKeyRow(row, now)
     });
   }
 
@@ -1620,21 +1893,25 @@ async function handleVerify(
       ok: true,
       valid: false,
       reason: "wrong_device",
-      data: publicKeyRow(
-        row,
-        now
-      )
+      data: publicKeyRow(row, now)
     });
   }
 
-  return json({
+  const payload = {
     ok: true,
     valid: true,
-    data: publicKeyRow(
-      row,
-      now
+    data: publicKeyRow(row, now)
+  };
+
+  return json(
+    await withSignedAuthResponse(
+      env,
+      "/api/verify",
+      requestMetadata,
+      deviceId,
+      payload
     )
-  });
+  );
 }
 
 async function handleRevoke(
@@ -1701,6 +1978,11 @@ async function route(
       link4m:
         Boolean(
           env.LINK4M_API_TOKEN
+        ),
+
+      authSigning:
+        Boolean(
+          env.AUTH_PRIVATE_KEY_PEM
         )
     });
   }
