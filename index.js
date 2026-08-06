@@ -197,6 +197,169 @@ async function deviceHash(env, deviceId) {
   return sha256(`${salt}:${deviceId}`);
 }
 
+const MULTI_DEVICE_PREFIX = "SENTMULTI:v1:";
+
+function normalizeMaxDevices(value) {
+  const maxDevices = Number(value ?? 1);
+
+  if (!Number.isInteger(maxDevices) || maxDevices < 0 || maxDevices > 100) {
+    throw new Error("Giới hạn thiết bị phải từ 0 đến 100. Dùng 0 để không giới hạn.");
+  }
+
+  return maxDevices;
+}
+
+function parseDeviceBinding(value) {
+  const raw = String(value || "").trim();
+
+  if (!raw) {
+    return {
+      multi: false,
+      limit: 1,
+      hashes: []
+    };
+  }
+
+  if (!raw.startsWith(MULTI_DEVICE_PREFIX)) {
+    return {
+      multi: false,
+      limit: 1,
+      hashes: [raw]
+    };
+  }
+
+  const payload = raw.slice(MULTI_DEVICE_PREFIX.length);
+  const separator = payload.indexOf(":");
+
+  if (separator < 0) {
+    return {
+      multi: false,
+      limit: 1,
+      hashes: [raw]
+    };
+  }
+
+  const limit = Number(payload.slice(0, separator));
+  const hashes = payload
+    .slice(separator + 1)
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean);
+
+  if (!Number.isInteger(limit) || limit < 0 || limit > 100) {
+    return {
+      multi: false,
+      limit: 1,
+      hashes: [raw]
+    };
+  }
+
+  return {
+    multi: true,
+    limit,
+    hashes: [...new Set(hashes)]
+  };
+}
+
+function serializeDeviceBinding(limit, hashes) {
+  return `${MULTI_DEVICE_PREFIX}${limit}:${[...new Set(hashes)].join(",")}`;
+}
+
+function deviceBindingInfo(row) {
+  const binding = parseDeviceBinding(row?.device_hash);
+
+  return {
+    maxDevices: binding.limit,
+    devicesUsed: binding.hashes.length,
+    bound: binding.hashes.length > 0,
+    hashes: binding.hashes,
+    multi: binding.multi
+  };
+}
+
+async function claimDeviceForKey(env, key, row, hash, now) {
+  let currentRow = row;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const binding = parseDeviceBinding(currentRow.device_hash);
+
+    if (binding.hashes.includes(hash)) {
+      return {
+        ok: true,
+        row: currentRow
+      };
+    }
+
+    if (binding.limit !== 0 && binding.hashes.length >= binding.limit) {
+      return {
+        ok: false,
+        error: "Key đã đạt giới hạn thiết bị."
+      };
+    }
+
+    const nextHashes = [...binding.hashes, hash];
+    const nextValue =
+      !binding.multi && !currentRow.device_hash && binding.limit === 1
+        ? hash
+        : serializeDeviceBinding(binding.limit, nextHashes);
+
+    const previousValue = currentRow.device_hash ?? null;
+
+    const result = await env.DB.prepare(
+      `UPDATE keys
+       SET device_hash = ?,
+           claimed_at = COALESCE(claimed_at, ?)
+       WHERE license_key = ?
+         AND status = 'active'
+         AND expires_at > ?
+         AND (
+           (device_hash IS NULL AND ? IS NULL)
+           OR device_hash = ?
+         )`
+    )
+      .bind(
+        nextValue,
+        now,
+        key,
+        now,
+        previousValue,
+        previousValue
+      )
+      .run();
+
+    if (result.meta.changes) {
+      currentRow = await env.DB.prepare(
+        `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
+      )
+        .bind(key)
+        .first();
+
+      return {
+        ok: true,
+        row: currentRow
+      };
+    }
+
+    currentRow = await env.DB.prepare(
+      `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
+    )
+      .bind(key)
+      .first();
+
+    if (!currentRow) {
+      return {
+        ok: false,
+        error: "Không tìm thấy key."
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    error: "Không thể liên kết thiết bị lúc này. Hãy thử lại."
+  };
+}
+
 function publicKeyRow(row, now = Date.now()) {
   const createdAt =
     Number(row.created_at);
@@ -212,10 +375,15 @@ function publicKeyRow(row, now = Date.now()) {
   const expired =
     now >= expiresAt;
 
+  const binding =
+    deviceBindingInfo(row);
+
   return {
     key: row.license_key,
     planHours: Number(row.plan_hours),
-    bound: Boolean(row.device_hash),
+    bound: binding.bound,
+    maxDevices: binding.maxDevices,
+    devicesUsed: binding.devicesUsed,
 
     createdAt:
       new Date(createdAt).toISOString(),
@@ -248,13 +416,22 @@ function publicKeyRow(row, now = Date.now()) {
 async function insertUniqueKey(
   env,
   planHours,
-  keyFormat = "SENT"
+  keyFormat = "SENT",
+  maxDevices = 1
 ) {
   const now = Date.now();
 
   const expiresAt =
     now +
     planHours * 60 * 60 * 1000;
+
+  const deviceLimit =
+    normalizeMaxDevices(maxDevices);
+
+  const initialBinding =
+    deviceLimit === 1
+      ? null
+      : serializeDeviceBinding(deviceLimit, []);
 
   for (
     let attempt = 0;
@@ -269,15 +446,17 @@ async function insertUniqueKey(
         `INSERT INTO keys (
           license_key,
           plan_hours,
+          device_hash,
           created_at,
           expires_at,
           status
         )
-        VALUES (?, ?, ?, ?, 'active')`
+        VALUES (?, ?, ?, ?, ?, 'active')`
       )
         .bind(
           licenseKey,
           planHours,
+          initialBinding,
           now,
           expiresAt
         )
@@ -286,7 +465,7 @@ async function insertUniqueKey(
       return {
         license_key: licenseKey,
         plan_hours: planHours,
-        device_hash: null,
+        device_hash: initialBinding,
         created_at: now,
         claimed_at: null,
         expires_at: expiresAt,
@@ -338,16 +517,17 @@ async function handleAdminCreateKey(
   const planHours =
     normalizePlan(body.planHours);
 
-  const keyFormat =
-    normalizeKeyFormat(
-      body.keyFormat
+  const maxDevices =
+    normalizeMaxDevices(
+      body.maxDevices
     );
 
   const row =
     await insertUniqueKey(
       env,
       planHours,
-      keyFormat
+      "SENT",
+      maxDevices
     );
 
   return json(
@@ -357,6 +537,93 @@ async function handleAdminCreateKey(
     },
     201
   );
+}
+
+async function handleAdminLink4mStats(
+  request,
+  env
+) {
+  if (!isAdmin(request, env)) {
+    return json(
+      {
+        ok: false,
+        error: "Không có quyền xem thống kê."
+      },
+      401
+    );
+  }
+
+  const now = Date.now();
+  const vietnamOffset = 7 * 60 * 60 * 1000;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const todayStart =
+    Math.floor((now + vietnamOffset) / dayMs) * dayMs - vietnamOffset;
+
+  const summary = await env.DB.prepare(
+    `SELECT
+       COUNT(DISTINCT ls.license_key) AS total,
+       COUNT(DISTINCT CASE
+         WHEN ls.completed_at >= ? THEN ls.license_key
+       END) AS today,
+       COUNT(DISTINCT CASE
+         WHEN k.status = 'active' AND k.expires_at > ? THEN ls.license_key
+       END) AS active,
+       COUNT(DISTINCT CASE
+         WHEN k.status != 'revoked' AND k.expires_at <= ? THEN ls.license_key
+       END) AS expired,
+       COUNT(DISTINCT CASE
+         WHEN k.status = 'revoked' THEN ls.license_key
+       END) AS revoked
+     FROM link_sessions AS ls
+     LEFT JOIN keys AS k
+       ON k.license_key = ls.license_key
+     WHERE ls.completed_at IS NOT NULL
+       AND ls.license_key IS NOT NULL`
+  )
+    .bind(todayStart, now, now)
+    .first();
+
+  const recentResult = await env.DB.prepare(
+    `SELECT
+       ls.license_key,
+       MAX(ls.completed_at) AS completed_at,
+       k.plan_hours,
+       k.device_hash,
+       k.claimed_at,
+       k.created_at,
+       k.expires_at,
+       k.status
+     FROM link_sessions AS ls
+     INNER JOIN keys AS k
+       ON k.license_key = ls.license_key
+     WHERE ls.completed_at IS NOT NULL
+       AND ls.license_key IS NOT NULL
+     GROUP BY ls.license_key
+     ORDER BY completed_at DESC
+     LIMIT 20`
+  ).all();
+
+  const recent = (recentResult.results || []).map(row => {
+    const data = publicKeyRow(row, now);
+
+    return {
+      ...data,
+      createdAt: new Date(Number(row.completed_at || row.created_at)).toISOString()
+    };
+  });
+
+  return json({
+    ok: true,
+    generatedAt: new Date(now).toISOString(),
+    stats: {
+      total: Number(summary?.total || 0),
+      today: Number(summary?.today || 0),
+      active: Number(summary?.active || 0),
+      expired: Number(summary?.expired || 0),
+      revoked: Number(summary?.revoked || 0)
+    },
+    recent
+  });
 }
 
 async function handleLink4mStart(
@@ -959,7 +1226,8 @@ function authBuildLegacySuccess(
     device_key_bound:
       Boolean(data.bound),
 
-    max_devices: 1,
+    max_devices:
+      Number(data.maxDevices ?? 1),
 
     started: true,
 
@@ -1041,75 +1309,28 @@ async function handleClaim(
     );
   }
 
-  if (
-    row.device_hash &&
-    row.device_hash !== hash
-  ) {
+  const claimResult =
+    await claimDeviceForKey(
+      env,
+      key,
+      row,
+      hash,
+      now
+    );
+
+  if (!claimResult.ok) {
     return json(
       {
         ok: false,
         valid: false,
-        error:
-          "Key đã được kích hoạt trên thiết bị khác."
+        error: claimResult.error
       },
       409
     );
   }
 
-  if (!row.device_hash) {
-    const result =
-      await env.DB.prepare(
-        `UPDATE keys
-         SET device_hash = ?,
-             claimed_at = ?
-         WHERE license_key = ?
-           AND device_hash IS NULL
-           AND status = 'active'
-           AND expires_at > ?`
-      )
-        .bind(
-          hash,
-          now,
-          key,
-          now
-        )
-        .run();
-
-    if (!result.meta.changes) {
-      const fresh =
-        await env.DB.prepare(
-          `SELECT *
-           FROM keys
-           WHERE license_key = ?`
-        )
-          .bind(key)
-          .first();
-
-      if (
-        !fresh ||
-        fresh.device_hash !== hash
-      ) {
-        return json(
-          {
-            ok: false,
-            valid: false,
-            error:
-              "Key vừa được kích hoạt trên thiết bị khác."
-          },
-          409
-        );
-      }
-    }
-  }
-
   const fresh =
-    await env.DB.prepare(
-      `SELECT *
-       FROM keys
-       WHERE license_key = ?`
-    )
-      .bind(key)
-      .first();
+    claimResult.row;
 
   return json({
     ok: true,
@@ -1379,7 +1600,10 @@ async function handleVerify(
     });
   }
 
-  if (!row.device_hash) {
+  const binding =
+    deviceBindingInfo(row);
+
+  if (!binding.bound) {
     return json({
       ok: true,
       valid: false,
@@ -1391,13 +1615,15 @@ async function handleVerify(
     });
   }
 
-  if (
-    row.device_hash !== hash
-  ) {
+  if (!binding.hashes.includes(hash)) {
     return json({
       ok: true,
       valid: false,
-      reason: "wrong_device"
+      reason: "wrong_device",
+      data: publicKeyRow(
+        row,
+        now
+      )
     });
   }
 
@@ -1510,6 +1736,16 @@ async function route(
           "Bạn cần vượt Link4m để nhận key."
       },
       403
+    );
+  }
+
+  if (
+    request.method === "POST" &&
+    path === "/api/admin/link4m-stats"
+  ) {
+    return handleAdminLink4mStats(
+      request,
+      env
     );
   }
 
