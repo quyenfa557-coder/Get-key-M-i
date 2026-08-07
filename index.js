@@ -198,9 +198,29 @@ async function sha256(text) {
  * an RSA PKCS#8 private key. The matching public key is embedded
  * in Login.h. Never commit the private key to GitHub.
  */
-const AUTH_RESPONSE_PROTOCOL = 3;
-const AUTH_RESPONSE_KEY_ID = "sent-auth-rsa-2026-08";
+const AUTH_RESPONSE_PROTOCOL = 4;
+const AUTH_RESPONSE_KEY_ID = "sent-auth-rsa-2026-08-v4";
+const AUTH_DEFAULT_BUILD_ID = "sent-menu-2026.08.07-r1";
+const AUTH_DEFAULT_CLIENT_VERSION = "5.2.1";
 const AUTH_MAX_CLOCK_SKEW_MS = 10 * 60 * 1000;
+
+function authServerEnabled(env) {
+  const value = String(env.AUTH_ENABLED ?? "true").trim().toLowerCase();
+  return !["0", "false", "off", "disabled"].includes(value);
+}
+
+function authActiveBuildId(env) {
+  return String(env.AUTH_ACTIVE_BUILD_ID || AUTH_DEFAULT_BUILD_ID).trim();
+}
+
+function authExpectedClientVersion(env) {
+  return String(env.AUTH_CLIENT_VERSION || AUTH_DEFAULT_CLIENT_VERSION).trim();
+}
+
+function authPolicyGeneration(env) {
+  const value = Number(env.AUTH_POLICY_GENERATION ?? 1);
+  return Number.isSafeInteger(value) && value > 0 ? value : 1;
+}
 
 let authPrivateKeyCache = null;
 let authPrivateKeySource = "";
@@ -292,12 +312,42 @@ function normalizeAuthProtocol(value) {
   return protocolVersion;
 }
 
+function normalizeAuthBuildId(value) {
+  const buildId = String(value || "").trim();
+  if (!/^[A-Za-z0-9._:-]{8,96}$/.test(buildId)) {
+    throw new Error("Build ID không hợp lệ.");
+  }
+  return buildId;
+}
+
+function normalizeAuthClientVersion(value) {
+  const version = String(value || "").trim();
+  if (!/^[A-Za-z0-9._+-]{1,40}$/.test(version)) {
+    throw new Error("Client version không hợp lệ.");
+  }
+  return version;
+}
+
 function readAuthRequestMetadata(body) {
   return {
     nonce: normalizeAuthNonce(body.nonce),
     clientTimeMs: normalizeAuthClientTime(body.clientTimeMs),
-    protocolVersion: normalizeAuthProtocol(body.protocolVersion)
+    protocolVersion: normalizeAuthProtocol(body.protocolVersion),
+    buildId: normalizeAuthBuildId(body.buildId),
+    clientVersion: normalizeAuthClientVersion(body.clientVersion)
   };
+}
+
+function enforceAuthPolicy(env, metadata) {
+  if (!authServerEnabled(env)) {
+    throw new Error("AUTH_DISABLED");
+  }
+  if (metadata.buildId !== authActiveBuildId(env)) {
+    throw new Error("BUILD_REVOKED_OR_OUTDATED");
+  }
+  if (metadata.clientVersion !== authExpectedClientVersion(env)) {
+    throw new Error("CLIENT_VERSION_REVOKED_OR_OUTDATED");
+  }
 }
 
 function authCanonicalPayload({
@@ -310,10 +360,14 @@ function authCanonicalPayload({
   bound,
   planHours,
   expiresAtMs,
-  serverTimeMs
+  serverTimeMs,
+  buildId,
+  clientVersion,
+  policyGeneration,
+  sessionId
 }) {
   return [
-    "SENT-AUTH-V3",
+    "SENT-AUTH-V4",
     `endpoint=${endpoint}`,
     `nonce=${nonce}`,
     `key=${key}`,
@@ -323,7 +377,11 @@ function authCanonicalPayload({
     `bound=${bound ? 1 : 0}`,
     `planHours=${planHours}`,
     `expiresAtMs=${expiresAtMs}`,
-    `serverTimeMs=${serverTimeMs}`
+    `serverTimeMs=${serverTimeMs}`,
+    `buildId=${buildId}`,
+    `clientVersion=${clientVersion}`,
+    `policyGeneration=${policyGeneration}`,
+    `sessionId=${sessionId}`
   ].join("\n");
 }
 
@@ -353,6 +411,8 @@ async function withSignedAuthResponse(
     return payload;
   }
 
+  enforceAuthPolicy(env, requestMetadata);
+
   const serverTimeMs = Date.now();
   const deviceDigest = await sha256(deviceId);
   const expiresAtMs = Number(
@@ -362,6 +422,11 @@ async function withSignedAuthResponse(
   if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= serverTimeMs) {
     throw new Error("Dữ liệu thời hạn license không hợp lệ.");
   }
+
+  const buildId = authActiveBuildId(env);
+  const clientVersion = authExpectedClientVersion(env);
+  const policyGeneration = authPolicyGeneration(env);
+  const sessionId = randomToken(24);
 
   const data = {
     ...payload.data,
@@ -378,7 +443,11 @@ async function withSignedAuthResponse(
     bound: Boolean(data.bound),
     planHours: Number(data.planHours || 0),
     expiresAtMs,
-    serverTimeMs
+    serverTimeMs,
+    buildId,
+    clientVersion,
+    policyGeneration,
+    sessionId
   });
 
   const signature = await authSignPayload(env, canonical);
@@ -393,6 +462,10 @@ async function withSignedAuthResponse(
       nonce: requestMetadata.nonce,
       deviceDigest,
       serverTimeMs,
+      buildId,
+      clientVersion,
+      policyGeneration,
+      sessionId,
       signature
     }
   };
@@ -1359,12 +1432,24 @@ function authNormalizeBody(
     0
   );
 
+  const buildId = authFindString(
+    originalBody,
+    new Set(["buildid", "build_id"])
+  );
+
+  const clientVersion = authFindString(
+    originalBody,
+    new Set(["clientversion", "client_version", "version"])
+  );
+
   return {
     key,
     deviceId,
     nonce,
     clientTimeMs,
-    protocolVersion
+    protocolVersion,
+    buildId,
+    clientVersion
   };
 }
 
@@ -1387,90 +1472,11 @@ async function authReadResponse(
   }
 }
 
-function authBuildLegacySuccess(
-  modernPayload
-) {
-  const data =
-    authIsObject(modernPayload.data)
-      ? modernPayload.data
-      : {};
-
-  const now =
-    Math.floor(
-      Date.now() / 1000
-    );
-
-  const remainingSeconds =
-    authPositiveInteger(
-      data.remainingSeconds,
-      24 * 60 * 60
-    );
-
-  const expiresAt =
-    now + remainingSeconds;
-
+function authBuildLegacySuccess() {
   return {
-    ...modernPayload,
-
-    ok: true,
-    valid: true,
-    msg: "OK",
-
-    server_time: now,
-
-    server_sig_alg:
-      LEGACY_SIG_ALG,
-
-    product_id:
-      LEGACY_PRODUCT_ID,
-
-    session_id:
-      crypto.randomUUID(),
-
-    feature_seed:
-      authRandomHex(32),
-
-    capability_nonce:
-      authRandomHex(32),
-
-    /*
-     * Bản compat_test đã bỏ xác minh
-     * chữ ký phản hồi cũ.
-     *
-     * Server vẫn kiểm tra key thật
-     * trong database D1.
-     */
-    server_sig:
-      "SENT_AUTH_COMPAT",
-
-    session_expires_at:
-      expiresAt,
-
-    session_generation: 1,
-
-    exp_generation: 1,
-
-    build_not_before:
-      now - 300,
-
-    build_expires_at:
-      expiresAt,
-
-    capability_expires_at:
-      expiresAt,
-
-    device_key_bound:
-      Boolean(data.bound),
-
-    max_devices:
-      Number(data.maxDevices ?? 1),
-
-    started: true,
-
-    started_at: now,
-
-    remaining_seconds:
-      remainingSeconds
+    ok: false,
+    valid: false,
+    error: "CLIENT_UPGRADE_REQUIRED"
   };
 }
 
@@ -1484,6 +1490,8 @@ async function handleClaim(
 
   const requestMetadata =
     readAuthRequestMetadata(body);
+
+  enforceAuthPolicy(env, requestMetadata);
 
   const key =
     normalizeKey(body.key);
@@ -1595,219 +1603,52 @@ async function handleDualSchemaClaim(
   env
 ) {
   if (request.method !== "POST") {
-    return json(
-      {
-        ok: false,
-        valid: false,
-        error:
-          "METHOD_NOT_ALLOWED"
-      },
-      405
-    );
+    return json({ ok: false, valid: false, error: "METHOD_NOT_ALLOWED" }, 405);
   }
 
   let originalBody;
-
   try {
-    originalBody =
-      await request.clone().json();
+    originalBody = await request.clone().json();
   } catch {
-    return json(
-      {
-        ok: false,
-        valid: false,
-        error:
-          "INVALID_JSON"
-      },
-      400
-    );
+    return json({ ok: false, valid: false, error: "INVALID_JSON" }, 400);
   }
 
-  const normalized =
-    authNormalizeBody(
-      originalBody
-    );
-
+  const normalized = authNormalizeBody(originalBody);
   if (
     !normalized.key ||
-    !normalized.deviceId
+    !normalized.deviceId ||
+    !normalized.nonce ||
+    !normalized.clientTimeMs ||
+    normalized.protocolVersion !== AUTH_RESPONSE_PROTOCOL ||
+    !normalized.buildId ||
+    !normalized.clientVersion
   ) {
-    return json(
-      {
-        ok: false,
-        valid: false,
-
-        error:
-          "REQUEST_FIELDS_UNRECOGNIZED",
-
-        receivedFields:
-          authIsObject(originalBody)
-            ? Object.keys(originalBody)
-            : []
-      },
-      400
-    );
+    return json({
+      ok: false,
+      valid: false,
+      error: "AUTH_V4_FIELDS_REQUIRED"
+    }, 400);
   }
 
+  const headers = new Headers(request.headers);
+  headers.set("content-type", "application/json");
+  headers.delete("content-length");
 
+  const modernRequest = new Request(request.url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      key: normalized.key,
+      deviceId: normalized.deviceId,
+      nonce: normalized.nonce,
+      clientTimeMs: normalized.clientTimeMs,
+      protocolVersion: normalized.protocolVersion,
+      buildId: normalized.buildId,
+      clientVersion: normalized.clientVersion
+    })
+  });
 
-
-
-  
-
-  const legacyClient =
-    authIsLegacyClient(request);
-
-  if (
-    !legacyClient &&
-    (
-      !normalized.nonce ||
-      !normalized.clientTimeMs ||
-      normalized.protocolVersion !== AUTH_RESPONSE_PROTOCOL
-    )
-  ) {
-    return json(
-      {
-        ok: false,
-        valid: false,
-        error: "AUTH_V3_FIELDS_REQUIRED"
-      },
-      400
-    );
-  }
-
-  const forwardedNonce =
-    normalized.nonce || authRandomHex(24);
-
-  const forwardedClientTimeMs =
-    normalized.clientTimeMs || Date.now();
-
-  const forwardedProtocolVersion =
-    normalized.protocolVersion || AUTH_RESPONSE_PROTOCOL;
-
-  const headers =
-    new Headers(
-      request.headers
-    );
-
-  headers.set(
-    "content-type",
-    "application/json"
-  );
-
-  headers.delete(
-    "content-length"
-  );
-
-  const modernRequest =
-    new Request(
-      request.url,
-      {
-        method: "POST",
-        headers,
-
-        body: JSON.stringify({
-          key:
-            normalized.key,
-
-          deviceId:
-            normalized.deviceId,
-
-          nonce:
-            forwardedNonce,
-
-          clientTimeMs:
-            forwardedClientTimeMs,
-
-          protocolVersion:
-            forwardedProtocolVersion
-        })
-      }
-    );
-
-
-
-const modernResponse =
-    await handleClaim(
-      modernRequest,
-      env
-    );
-
-  const {
-    payload,
-    rawText
-  } =
-    await authReadResponse(
-      modernResponse
-    );
-
-  if (
-    !payload ||
-    !authIsObject(payload)
-  ) {
-    return json(
-      {
-        ok: false,
-        valid: false,
-
-        error:
-          "MODERN_HANDLER_INVALID_JSON",
-
-        detail:
-          String(rawText || "")
-            .slice(0, 200)
-      },
-      502
-    );
-  }
-
-  /*
-   * Login.h mới không gửi header cũ.
-   * Trả nguyên response hiện tại.
-   */
-  if (
-    !legacyClient
-  ) {
-    return json(
-      payload,
-      modernResponse.status
-    );
-  }
-
-  /*
-   * Key không hợp lệ vẫn bị từ chối.
-   */
-  if (
-    !modernResponse.ok ||
-    payload.ok !== true ||
-    payload.valid !== true ||
-    !authIsObject(payload.data) ||
-    payload.data.bound !== true
-  ) {
-    return json(
-      {
-        ...payload,
-
-        msg: String(
-          payload.error ||
-          payload.message ||
-          "INVALID_KEY"
-        )
-      },
-      modernResponse.status
-    );
-  }
-
-  /*
-   * Key hợp lệ thì bổ sung schema
-   * tương thích libloader cũ.
-   */
-  return json(
-    authBuildLegacySuccess(
-      payload
-    ),
-    200
-  );
+  return handleClaim(modernRequest, env);
 }
 
 /*
@@ -1825,6 +1666,8 @@ async function handleVerify(
 
   const requestMetadata =
     readAuthRequestMetadata(body);
+
+  enforceAuthPolicy(env, requestMetadata);
 
   const key =
     normalizeKey(body.key);
@@ -1983,7 +1826,19 @@ async function route(
       authSigning:
         Boolean(
           env.AUTH_PRIVATE_KEY_PEM
-        )
+        ),
+
+      authEnabled:
+        authServerEnabled(env),
+
+      authProtocol:
+        AUTH_RESPONSE_PROTOCOL,
+
+      activeBuildId:
+        authActiveBuildId(env),
+
+      policyGeneration:
+        authPolicyGeneration(env)
     });
   }
 

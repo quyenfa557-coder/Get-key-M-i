@@ -1,9 +1,21 @@
-name = "sent-tweaks-auth"
-main = "worker.js"
-compatibility_date = "2026-08-04"
+name = "snowy-cherry-0514"
+main = "index.js"
+compatibility_date = "2026-08-01"
+
+[assets]
+directory = "."
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/senttwgetkey", "/senttwnhankey"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "sent-key-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
-migrations_dir = "migrations"
+database_id = "ed7fc490-f3d1-4b45-ab68-83bf89cc65d6"
+migrations_dir = "."
+
+[vars]
+DEMO_MODE = "false"
+AUTH_ENABLED = "true"
+AUTH_ACTIVE_BUILD_ID = "sent-menu-2026.08.07-r1"
+AUTH_CLIENT_VERSION = "5.2.1"
+AUTH_POLICY_GENERATION = "1"

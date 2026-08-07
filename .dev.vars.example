@@ -1,3 +1,10 @@
-# Dùng khi chạy local. Không commit file .dev.vars thật lên GitHub.
-ADMIN_TOKEN=doi-thanh-mat-khau-rat-dai
-DEVICE_SALT=doi-thanh-chuoi-ngau-nhien-rat-dai
+# Local development only. Never commit .dev.vars with real secrets.
+ADMIN_TOKEN=replace-with-a-long-random-value
+DEVICE_SALT=replace-with-a-long-random-value
+LINK4M_API_TOKEN=replace-with-link4m-token
+AUTH_PRIVATE_KEY_PEM="-----BEGIN PRIVATE KEY-----\nREPLACE_ME\n-----END PRIVATE KEY-----"
+
+AUTH_ENABLED=true
+AUTH_ACTIVE_BUILD_ID=sent-menu-2026.08.07-r1
+AUTH_CLIENT_VERSION=5.2.1
+AUTH_POLICY_GENERATION=1

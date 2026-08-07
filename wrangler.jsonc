@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "snowy-cherry-0514",
-  "main": "auth-worker.js",
+  "main": "index.js",
   "compatibility_date": "2026-08-01",
   "assets": {
     "directory": ".",
@@ -26,6 +26,10 @@
     }
   ],
   "vars": {
-    "DEMO_MODE": "false"
+    "DEMO_MODE": "false",
+    "AUTH_ENABLED": "true",
+    "AUTH_ACTIVE_BUILD_ID": "sent-menu-2026.08.07-r1",
+    "AUTH_CLIENT_VERSION": "5.2.1",
+    "AUTH_POLICY_GENERATION": "1"
   }
 }
