@@ -188,6 +188,100 @@ async function sha256(text) {
   ).join("");
 }
 
+/*
+ * MD5 is required only by the old libloader.so wire protocol. Cloudflare's
+ * Web Crypto implementation does not expose MD5, so keep this small,
+ * self-contained implementation next to the compatibility adapter.
+ */
+function md5Hex(input) {
+  const source = new TextEncoder().encode(String(input));
+  const paddedLength = Math.ceil((source.length + 9) / 64) * 64;
+  const data = new Uint8Array(paddedLength);
+  data.set(source);
+  data[source.length] = 0x80;
+
+  const view = new DataView(data.buffer);
+  const bitLength = source.length * 8;
+  view.setUint32(paddedLength - 8, bitLength >>> 0, true);
+  view.setUint32(
+    paddedLength - 4,
+    Math.floor(bitLength / 0x100000000) >>> 0,
+    true
+  );
+
+  const shifts = [
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21
+  ];
+  const constants = Array.from(
+    { length: 64 },
+    (_, index) =>
+      Math.floor(Math.abs(Math.sin(index + 1)) * 0x100000000) >>> 0
+  );
+  const rotateLeft = (value, count) =>
+    ((value << count) | (value >>> (32 - count))) >>> 0;
+
+  let a0 = 0x67452301;
+  let b0 = 0xefcdab89;
+  let c0 = 0x98badcfe;
+  let d0 = 0x10325476;
+
+  for (let offset = 0; offset < data.length; offset += 64) {
+    let a = a0;
+    let b = b0;
+    let c = c0;
+    let d = d0;
+
+    for (let index = 0; index < 64; index += 1) {
+      let mixed;
+      let wordIndex;
+
+      if (index < 16) {
+        mixed = (b & c) | (~b & d);
+        wordIndex = index;
+      } else if (index < 32) {
+        mixed = (d & b) | (~d & c);
+        wordIndex = (5 * index + 1) % 16;
+      } else if (index < 48) {
+        mixed = b ^ c ^ d;
+        wordIndex = (3 * index + 5) % 16;
+      } else {
+        mixed = c ^ (b | ~d);
+        wordIndex = (7 * index) % 16;
+      }
+
+      const sum = (
+        a +
+        (mixed >>> 0) +
+        constants[index] +
+        view.getUint32(offset + wordIndex * 4, true)
+      ) >>> 0;
+      const previousD = d;
+      d = c;
+      c = b;
+      b = (b + rotateLeft(sum, shifts[index])) >>> 0;
+      a = previousD;
+    }
+
+    a0 = (a0 + a) >>> 0;
+    b0 = (b0 + b) >>> 0;
+    c0 = (c0 + c) >>> 0;
+    d0 = (d0 + d) >>> 0;
+  }
+
+  return [a0, b0, c0, d0]
+    .flatMap(word => [
+      word & 0xff,
+      (word >>> 8) & 0xff,
+      (word >>> 16) & 0xff,
+      (word >>> 24) & 0xff
+    ])
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 
 
 /*
@@ -1481,6 +1575,298 @@ function authBuildLegacySuccess() {
 }
 
 
+
+/*
+ * =====================================================
+ * LEGACY NATIVE CLIENT COMPATIBILITY
+ * =====================================================
+ * The old native client POSTs application/x-www-form-urlencoded:
+ *   key=...&deviceid=...&tokenanti=...
+ * and expects JSON containing "token".
+ *
+ * This adapter DOES NOT bypass license checks. It uses the same D1 key,
+ * expiration, status, and device-binding policy as the current Worker.
+ */
+const LIBLOADER_LEGACY_SECRET =
+  "VWnSvunmScLMb9KAo68bSrKYIKOo5Jqm";
+const LIBLOADER_LEGACY_GAME = "FF";
+const LIBLOADER_LEGACY_PACKAGE = "com.dts.freefiremax";
+
+function libloaderLegacyFailure(reason) {
+  return json({
+    status: false,
+    reason: String(reason || "Không thể xác thực key.")
+  });
+}
+
+async function handleLegacyLibloaderClaim(form, env) {
+  const submittedGame = String(form.get("game") || "");
+  const submittedKey = String(form.get("user_key") || "");
+  const submittedSerial = String(form.get("serial") || "");
+  const submittedPackage = String(form.get("package") || "");
+
+  if (!submittedKey.trim() || !submittedSerial.trim()) {
+    return libloaderLegacyFailure("Thiếu key hoặc mã thiết bị.");
+  }
+
+  if (
+    submittedGame !== LIBLOADER_LEGACY_GAME ||
+    submittedPackage !== LIBLOADER_LEGACY_PACKAGE
+  ) {
+    return libloaderLegacyFailure("Ứng dụng gửi yêu cầu không hợp lệ.");
+  }
+
+  let key;
+  let deviceId;
+
+  try {
+    // Normalize only for the database and device hash. The MD5 response must
+    // use the exact form values because libloader calculates the same value.
+    key = normalizeKey(submittedKey);
+    deviceId = normalizeDeviceId(submittedSerial);
+  } catch (error) {
+    return libloaderLegacyFailure(
+      error instanceof Error ? error.message : "Key không hợp lệ."
+    );
+  }
+
+  const hash = await deviceHash(env, deviceId);
+  const now = Date.now();
+  const row = await env.DB.prepare(
+    `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
+  )
+    .bind(key)
+    .first();
+
+  if (!row) {
+    return libloaderLegacyFailure("Không tìm thấy key.");
+  }
+
+  if (row.status === "revoked") {
+    return libloaderLegacyFailure("Key đã bị thu hồi.");
+  }
+
+  if (now >= Number(row.expires_at)) {
+    return libloaderLegacyFailure("Key đã hết hạn.");
+  }
+
+  const claimResult = await claimDeviceForKey(
+    env,
+    key,
+    row,
+    hash,
+    now
+  );
+
+  if (!claimResult.ok) {
+    return libloaderLegacyFailure(claimResult.error);
+  }
+
+  const token = md5Hex(
+    `${submittedGame}-${submittedKey}-${submittedSerial}-${submittedPackage}-${LIBLOADER_LEGACY_SECRET}`
+  );
+
+  return json({
+    status: true,
+    data: {
+      token,
+      rng: Math.floor(Date.now() / 1000),
+      EXP: new Date(Number(row.expires_at)).toISOString(),
+      modname: "Sent Tweaks"
+    }
+  });
+}
+
+const LIBMAIN_LEGACY_CODES = Object.freeze({
+  "A": 876543,
+  "B": 124367,
+  "C": 456789,
+  "D": 372910,
+  "E": 583210,
+  "F": 290381,
+  "G": 104783,
+  "H": 389104,
+  "I": 759283,
+  "J": 467182,
+  "K": 905173,
+  "L": 614273,
+  "M": 835612,
+  "N": 248359,
+  "O": 631759,
+  "P": 493102,
+  "Q": 721098,
+  "R": 384560,
+  "S": 560173,
+  "T": 193847,
+  "U": 782356,
+  "V": 149273,
+  "W": 367205,
+  "X": 982147,
+  "Y": 518374,
+  "Z": 673892,
+  "a": 715493,
+  "b": 204895,
+  "c": 347210,
+  "d": 598102,
+  "e": 861320,
+  "f": 190478,
+  "g": 523618,
+  "h": 704329,
+  "i": 315279,
+  "j": 239815,
+  "k": 408573,
+  "l": 629174,
+  "m": 847320,
+  "n": 150283,
+  "o": 479630,
+  "p": 526384,
+  "q": 371029,
+  "r": 860175,
+  "s": 204987,
+  "t": 914502,
+  "u": 637491,
+  "v": 320485,
+  "w": 190384,
+  "x": 582713,
+  "y": 945210,
+  "z": 750361,
+  "0": 428391,
+  "1": 610283,
+  "2": 357492,
+  "3": 801473,
+  "4": 295071,
+  "5": 748291,
+  "6": 182493,
+  "7": 903275,
+  "8": 549183,
+  "9": 671294,
+  "!": 493012,
+  "@": 576103,
+  "#": 293745,
+  "$": 194837,
+  "%": 608412,
+  "^": 738492,
+  "&": 530174,
+  "*": 129073,
+  "(": 413982,
+  ")": 790364,
+  "-": 209374,
+  "_": 618349,
+  "+": 472395,
+  "=": 985312,
+  "{": 273948,
+  "}": 650293,
+  "[": 391746,
+  "]": 482319,
+  "|": 537104,
+  "\\": 672491,
+  ":": 394871,
+  ";": 840123,
+  "'": 560481,
+  "\"": 127983,
+  ",": 293807,
+  ".": 718409,
+  "<": 364091,
+  ">": 583201,
+  "?": 490127,
+  "/": 768203,
+  " ": 999999
+});
+
+function libmainLegacyEncode(value) {
+  const parts = [];
+
+  for (const character of String(value || "")) {
+    const code = LIBMAIN_LEGACY_CODES[character];
+    if (!Number.isInteger(code)) {
+      throw new Error("Legacy libmain token chứa ký tự không được hỗ trợ.");
+    }
+    parts.push(String(code));
+  }
+
+  return parts.join("-");
+}
+
+async function handleLegacyLibmainClaim(request, env) {
+  const contentType = String(
+    request.headers.get("content-type") || ""
+  ).toLowerCase();
+
+  if (contentType.includes("application/json")) {
+    return null;
+  }
+
+  const rawBody = await request.text();
+  const form = new URLSearchParams(rawBody);
+
+  if (form.has("user_key") || form.has("serial")) {
+    return handleLegacyLibloaderClaim(form, env);
+  }
+
+  const submittedKey = String(form.get("key") || "").trim();
+  const submittedDeviceId = String(form.get("deviceid") || "").trim();
+
+  if (!submittedKey || !submittedDeviceId) {
+    return json({
+      ok: false,
+      valid: false,
+      error: "LEGACY_FIELDS_REQUIRED"
+    }, 400);
+  }
+
+  // Normalize only for D1 lookup. The response token MUST use the exact key
+  // string submitted by the native client, because the client calculates the
+  // same token locally from its original input.
+  const key = normalizeKey(submittedKey);
+  const deviceId = normalizeDeviceId(submittedDeviceId);
+  const hash = await deviceHash(env, deviceId);
+  const now = Date.now();
+
+  const row = await env.DB.prepare(
+    `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
+  )
+    .bind(key)
+    .first();
+
+  if (!row) {
+    return json({ ok: false, valid: false, error: "Không tìm thấy key." }, 404);
+  }
+
+  if (row.status === "revoked") {
+    return json({ ok: false, valid: false, error: "Key đã bị thu hồi." }, 403);
+  }
+
+  if (now >= Number(row.expires_at)) {
+    return json({ ok: false, valid: false, error: "Key đã hết hạn." }, 403);
+  }
+
+  const claimResult = await claimDeviceForKey(
+    env,
+    key,
+    row,
+    hash,
+    now
+  );
+
+  if (!claimResult.ok) {
+    return json({
+      ok: false,
+      valid: false,
+      error: claimResult.error
+    }, 409);
+  }
+
+  const token = libmainLegacyEncode(
+    `meostar-${submittedKey}-${deviceId}`
+  );
+
+  return json({
+    ok: true,
+    valid: true,
+    token
+  });
+}
+
 async function handleClaim(
   request,
   env
@@ -1897,12 +2283,39 @@ async function route(
   }
 
   /*
+   * Route ngắn dành riêng cho các native client cũ.
+   * Giữ /api/claim cho client Auth V4 hiện tại.
+   */
+  if (
+    request.method === "POST" &&
+    path === "/a"
+  ) {
+    return handleLegacyLibmainClaim(
+      request,
+      env
+    );
+  }
+
+  /*
    * API claim đã chuyển sang adapter.
    */
   if (
     request.method === "POST" &&
     path === "/api/claim"
   ) {
+    const contentType = String(
+      request.headers.get("content-type") || ""
+    ).toLowerCase();
+
+    // Native client cũ dùng CURLOPT_POSTFIELDS => form-urlencoded.
+    // Client Auth V4 hiện tại vẫn đi nguyên luồng JSON bên dưới.
+    if (!contentType.includes("application/json")) {
+      return handleLegacyLibmainClaim(
+        request,
+        env
+      );
+    }
+
     return handleDualSchemaClaim(
       request,
       env,
@@ -1996,4 +2409,3 @@ export default {
   
 
   
-

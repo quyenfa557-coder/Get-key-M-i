@@ -1,11 +1,11 @@
-name = "snowy-cherry-0514"
+name = "sentkeyfree"
 main = "index.js"
 compatibility_date = "2026-08-01"
 
 [assets]
 directory = "."
 binding = "ASSETS"
-run_worker_first = ["/api/*", "/senttwgetkey", "/senttwnhankey"]
+run_worker_first = ["/api/*", "/a", "/senttwgetkey", "/senttwnhankey"]
 
 [[d1_databases]]
 binding = "DB"
