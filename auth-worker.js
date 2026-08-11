@@ -412,6 +412,325 @@ async function rewriteRequestPath(request, newPath) {
   return new Request(url.toString(), init);
 }
 
+
+/* =========================================================
+ * LINK4M HISTORY V3 — immutable analytics
+ *
+ * Completed Link4m sessions are copied to link4m_history and never
+ * deleted by session cleanup. This prevents "yesterday" from shrinking
+ * during the day.
+ * ========================================================= */
+
+let link4mHistoryReadyPromise = null;
+
+function randomToken(byteLength = 32) {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+async function sha256Hex(text) {
+  const bytes = new TextEncoder().encode(String(text));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+
+  return Array.from(
+    new Uint8Array(digest),
+    byte => byte.toString(16).padStart(2, "0")
+  ).join("");
+}
+
+function ensureLink4mHistory(env) {
+  if (!link4mHistoryReadyPromise) {
+    link4mHistoryReadyPromise = (async () => {
+      if (!env.DB) {
+        throw new Error("D1 database chưa được liên kết với Worker.");
+      }
+
+      await env.DB.prepare(
+        `CREATE TABLE IF NOT EXISTS link4m_history (
+           license_key TEXT PRIMARY KEY,
+           completed_at INTEGER NOT NULL
+         )`
+      ).run();
+
+      await env.DB.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_link4m_history_completed_at
+         ON link4m_history(completed_at)`
+      ).run();
+
+      // One-time/continuous backfill from all completed sessions that
+      // still exist. INSERT OR IGNORE makes this safe on every cold start.
+      await env.DB.prepare(
+        `INSERT OR IGNORE INTO link4m_history (
+           license_key,
+           completed_at
+         )
+         SELECT
+           license_key,
+           completed_at
+         FROM link_sessions
+         WHERE completed_at IS NOT NULL
+           AND license_key IS NOT NULL`
+      ).run();
+
+      return true;
+    })().catch(error => {
+      link4mHistoryReadyPromise = null;
+      throw error;
+    });
+  }
+
+  return link4mHistoryReadyPromise;
+}
+
+async function recordCompletedLink4mSession(env, sessionHash) {
+  await ensureLink4mHistory(env);
+
+  const row = await env.DB.prepare(
+    `SELECT
+       license_key,
+       completed_at
+     FROM link_sessions
+     WHERE session_hash = ?
+       AND completed_at IS NOT NULL
+       AND license_key IS NOT NULL
+     LIMIT 1`
+  )
+    .bind(sessionHash)
+    .first();
+
+  if (!row) {
+    return false;
+  }
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO link4m_history (
+       license_key,
+       completed_at
+     )
+     VALUES (?, ?)`
+  )
+    .bind(
+      row.license_key,
+      Number(row.completed_at)
+    )
+    .run();
+
+  return true;
+}
+
+async function handleSafeLink4mStart(request, env) {
+  const apiToken = String(
+    env.LINK4M_API_TOKEN || ""
+  ).trim();
+
+  if (!apiToken) {
+    return json({
+      ok: false,
+      error: "Máy chủ chưa cấu hình LINK4M_API_TOKEN."
+    }, 503);
+  }
+
+  await ensureLink4mHistory(env);
+
+  const now = Date.now();
+  const expiresAt =
+    now + 20 * 60 * 1000;
+
+  const sessionToken =
+    randomToken(32);
+
+  const sessionHash =
+    await sha256Hex(sessionToken);
+
+  // IMPORTANT:
+  // Only abandoned/incomplete sessions may be removed.
+  // Never remove completed sessions because they are historical analytics.
+  await env.DB.prepare(
+    `DELETE FROM link_sessions
+     WHERE completed_at IS NULL
+       AND expires_at < ?`
+  )
+    .bind(
+      now - 24 * 60 * 60 * 1000
+    )
+    .run();
+
+  await env.DB.prepare(
+    `INSERT INTO link_sessions (
+       session_hash,
+       created_at,
+       expires_at
+     )
+     VALUES (?, ?, ?)`
+  )
+    .bind(
+      sessionHash,
+      now,
+      expiresAt
+    )
+    .run();
+
+  const callbackUrl =
+    new URL(
+      "/senttwgetkey",
+      request.url
+    );
+
+  callbackUrl.searchParams.set(
+    "session",
+    sessionToken
+  );
+
+  const link4mApi =
+    new URL(
+      "https://link4m.co/api-shorten/v2"
+    );
+
+  link4mApi.searchParams.set(
+    "api",
+    apiToken
+  );
+
+  link4mApi.searchParams.set(
+    "url",
+    callbackUrl.toString()
+  );
+
+  try {
+    const response =
+      await fetch(
+        link4mApi.toString(),
+        {
+          method: "GET",
+          headers: {
+            accept: "application/json"
+          }
+        }
+      );
+
+    const raw =
+      await response.text();
+
+    let result;
+
+    try {
+      result =
+        JSON.parse(raw);
+    } catch {
+      throw new Error(
+        "Link4m trả về dữ liệu không hợp lệ."
+      );
+    }
+
+    if (
+      !response.ok ||
+      String(result.status || "")
+        .toLowerCase() !== "success"
+    ) {
+      throw new Error(
+        result.message ||
+        "Link4m không thể tạo liên kết."
+      );
+    }
+
+    const shortUrl =
+      result.shortenedUrl ||
+      result.shortened_url ||
+      result.shortUrl;
+
+    if (
+      !shortUrl ||
+      !/^https?:\/\//i.test(shortUrl)
+    ) {
+      throw new Error(
+        "Link4m không trả về đường dẫn rút gọn."
+      );
+    }
+
+    return json({
+      ok: true,
+      shortUrl
+    });
+  } catch (error) {
+    await env.DB.prepare(
+      `DELETE FROM link_sessions
+       WHERE session_hash = ?
+         AND completed_at IS NULL`
+    )
+      .bind(sessionHash)
+      .run();
+
+    throw error;
+  }
+}
+
+async function forwardAndRecordLink4mComplete(
+  request,
+  env,
+  ctx
+) {
+  let sessionHash = "";
+
+  try {
+    const body =
+      await request.clone().json();
+
+    const token =
+      String(
+        body?.sessionToken || ""
+      ).trim();
+
+    if (token) {
+      sessionHash =
+        await sha256Hex(token);
+    }
+  } catch {
+    // index.js will return its existing validation error.
+  }
+
+  const response =
+    await signedWorker.fetch(
+      request,
+      env,
+      ctx
+    );
+
+  if (
+    sessionHash &&
+    response.ok
+  ) {
+    try {
+      const payload =
+        await response.clone().json();
+
+      if (
+        payload?.ok === true &&
+        payload?.data?.key
+      ) {
+        await recordCompletedLink4mSession(
+          env,
+          sessionHash
+        );
+      }
+    } catch {
+      // Never break a successful Get Key response because analytics failed.
+    }
+  }
+
+  return response;
+}
+
+
 /* FREE / Link4m analytics V2 */
 
 function mapRecentLink4mRow(row, now) {
@@ -440,6 +759,8 @@ async function handleAccurateLink4mStats(request, env) {
     }, 503);
   }
 
+  await ensureLink4mHistory(env);
+
   const now = Date.now();
   const {
     yesterdayStart,
@@ -450,32 +771,34 @@ async function handleAccurateLink4mStats(request, env) {
   const summary = await env.DB.prepare(
     `SELECT
        COUNT(*) AS completed_sessions,
-       COUNT(DISTINCT ls.license_key) AS total,
+       COUNT(DISTINCT h.license_key) AS total,
        COUNT(DISTINCT CASE
-         WHEN ls.completed_at >= ? AND ls.completed_at < ?
-         THEN ls.license_key
+         WHEN h.completed_at >= ?
+          AND h.completed_at < ?
+         THEN h.license_key
        END) AS today,
        COUNT(DISTINCT CASE
-         WHEN ls.completed_at >= ? AND ls.completed_at < ?
-         THEN ls.license_key
+         WHEN h.completed_at >= ?
+          AND h.completed_at < ?
+         THEN h.license_key
        END) AS yesterday,
        COUNT(DISTINCT CASE
-         WHEN k.status = 'active' AND k.expires_at > ?
-         THEN ls.license_key
+         WHEN k.status = 'active'
+          AND k.expires_at > ?
+         THEN h.license_key
        END) AS active,
        COUNT(DISTINCT CASE
-         WHEN k.status != 'revoked' AND k.expires_at <= ?
-         THEN ls.license_key
+         WHEN k.status != 'revoked'
+          AND k.expires_at <= ?
+         THEN h.license_key
        END) AS expired,
        COUNT(DISTINCT CASE
          WHEN k.status = 'revoked'
-         THEN ls.license_key
+         THEN h.license_key
        END) AS revoked
-     FROM link_sessions AS ls
+     FROM link4m_history AS h
      LEFT JOIN keys AS k
-       ON k.license_key = ls.license_key
-     WHERE ls.completed_at IS NOT NULL
-       AND ls.license_key IS NOT NULL`
+       ON k.license_key = h.license_key`
   )
     .bind(
       todayStart,
@@ -489,58 +812,117 @@ async function handleAccurateLink4mStats(request, env) {
 
   const recentResult = await env.DB.prepare(
     `SELECT
-       ls.license_key,
-       MAX(ls.completed_at) AS completed_at,
+       h.license_key,
+       h.completed_at,
        k.plan_hours,
        k.device_hash,
        k.claimed_at,
        k.created_at,
        k.expires_at,
        k.status
-     FROM link_sessions AS ls
+     FROM link4m_history AS h
      INNER JOIN keys AS k
-       ON k.license_key = ls.license_key
-     WHERE ls.completed_at IS NOT NULL
-       AND ls.license_key IS NOT NULL
-     GROUP BY ls.license_key
-     ORDER BY completed_at DESC
+       ON k.license_key = h.license_key
+     ORDER BY h.completed_at DESC
      LIMIT 20`
   ).all();
 
-  const recent = (recentResult.results || []).map(
-    row => mapRecentLink4mRow(row, now)
-  );
+  const recent =
+    (recentResult.results || [])
+      .map(
+        row =>
+          mapRecentLink4mRow(
+            row,
+            now
+          )
+      );
 
-  const today = Number(summary?.today || 0);
-  const yesterday = Number(summary?.yesterday || 0);
-  const difference = today - yesterday;
+  const today =
+    Number(
+      summary?.today || 0
+    );
+
+  const yesterday =
+    Number(
+      summary?.yesterday || 0
+    );
+
+  const difference =
+    today - yesterday;
 
   let percentChange = 0;
 
   if (yesterday > 0) {
     percentChange =
-      Math.round((difference / yesterday) * 10000) / 100;
+      Math.round(
+        (difference / yesterday) *
+        10000
+      ) / 100;
   } else if (today > 0) {
     percentChange = 100;
   }
 
   return json({
     ok: true,
-    generatedAt: new Date(now).toISOString(),
-    timeZone: "Asia/Ho_Chi_Minh",
+    generatedAt:
+      new Date(now).toISOString(),
+    serverTimeMs: now,
+    timeZone:
+      "Asia/Ho_Chi_Minh",
+    integrity: {
+      source:
+        "link4m_history",
+      immutableCompletedHistory:
+        true,
+      completedSessionCleanup:
+        "incomplete_only",
+      note:
+        "Completed Link4m records are retained and daily windows are fixed to UTC+7."
+    },
     dayBounds: {
-      yesterdayStart: new Date(yesterdayStart).toISOString(),
-      todayStart: new Date(todayStart).toISOString(),
-      tomorrowStart: new Date(tomorrowStart).toISOString()
+      yesterdayStartMs:
+        yesterdayStart,
+      todayStartMs:
+        todayStart,
+      tomorrowStartMs:
+        tomorrowStart,
+      yesterdayStart:
+        new Date(
+          yesterdayStart
+        ).toISOString(),
+      todayStart:
+        new Date(
+          todayStart
+        ).toISOString(),
+      tomorrowStart:
+        new Date(
+          tomorrowStart
+        ).toISOString()
     },
     stats: {
-      completedSessions: Number(summary?.completed_sessions || 0),
-      total: Number(summary?.total || 0),
+      completedSessions:
+        Number(
+          summary?.completed_sessions ||
+          0
+        ),
+      total:
+        Number(
+          summary?.total || 0
+        ),
       today,
       yesterday,
-      active: Number(summary?.active || 0),
-      expired: Number(summary?.expired || 0),
-      revoked: Number(summary?.revoked || 0),
+      active:
+        Number(
+          summary?.active || 0
+        ),
+      expired:
+        Number(
+          summary?.expired || 0
+        ),
+      revoked:
+        Number(
+          summary?.revoked || 0
+        ),
       todayVsYesterday: {
         difference,
         percentChange
@@ -873,6 +1255,29 @@ export default {
       const url = new URL(request.url);
       const path =
         url.pathname.replace(/\/+$/, "") || "/";
+
+      // Stable Link4m session lifecycle.
+      // This bypasses index.js's old cleanup that deleted completed history.
+      if (
+        request.method === "POST" &&
+        path === "/api/link4m/start"
+      ) {
+        return handleSafeLink4mStart(
+          request,
+          env
+        );
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/api/link4m/complete"
+      ) {
+        return forwardAndRecordLink4mComplete(
+          request,
+          env,
+          ctx
+        );
+      }
 
       if (
         request.method === "POST" &&
