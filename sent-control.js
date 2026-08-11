@@ -9,6 +9,7 @@
 
   const loginMessage = $("loginMessage");
   const createMessage = $("createMessage");
+  const freeCreateMessage = $("freeCreateMessage");
   const revokeMessage = $("revokeMessage");
   const statsMessage = $("statsMessage");
   const vipStatsMessage = $("vipStatsMessage");
@@ -16,6 +17,10 @@
   const resultList = $("resultList");
   const emptyResult = $("emptyResult");
   const copyAllBtn = $("copyAllBtn");
+
+  const freeResultList = $("freeResultList");
+  const freeEmptyResult = $("freeEmptyResult");
+  const freeCopyAllBtn = $("freeCopyAllBtn");
 
   const recentList = $("recentList");
   const recentEmpty = $("recentEmpty");
@@ -25,6 +30,7 @@
 
   let adminToken = "";
   let createdKeys = [];
+  let freeCreatedKeys = [];
 
   function setMessage(element, text, type = "") {
     if (!element) return;
@@ -350,6 +356,58 @@
     }
   }
 
+  function renderFreeCreatedKeys() {
+    freeResultList.replaceChildren();
+
+    if (!freeCreatedKeys.length) {
+      freeEmptyResult.classList.remove("hidden");
+      freeResultList.classList.add("hidden");
+      freeCopyAllBtn.disabled = true;
+      return;
+    }
+
+    freeEmptyResult.classList.add("hidden");
+    freeResultList.classList.remove("hidden");
+    freeCopyAllBtn.disabled = false;
+
+    freeCreatedKeys.forEach(item => {
+      const row = document.createElement("div");
+      row.className = "key-item";
+
+      const main = document.createElement("div");
+      main.className = "key-main";
+
+      const code = document.createElement("code");
+      code.textContent = item.key;
+
+      const meta = document.createElement("span");
+      const limitText =
+        Number(item.maxDevices) === 0
+          ? "không giới hạn thiết bị"
+          : `${Number(item.maxDevices) || 1} thiết bị`;
+
+      meta.textContent =
+        `FREE • ${formatPlan(item.planHours)} • ${limitText}`;
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "copy-one";
+      button.textContent = "Sao chép";
+
+      button.addEventListener("click", async () => {
+        await copyText(item.key);
+        button.textContent = "Đã chép ✓";
+        setTimeout(() => {
+          button.textContent = "Sao chép";
+        }, 1200);
+      });
+
+      main.append(code, meta);
+      row.append(main, button);
+      freeResultList.append(row);
+    });
+  }
+
   function renderCreatedKeys() {
     resultList.replaceChildren();
 
@@ -511,6 +569,83 @@
     }
   });
 
+  $("freeCreateBtn").addEventListener("click", async () => {
+    const button = $("freeCreateBtn");
+
+    const planHours =
+      Number($("freePlanHours").value);
+    const maxDevices =
+      Number($("freeMaxDevices").value);
+
+    const count = Math.max(
+      1,
+      Math.min(
+        20,
+        Number($("freeKeyCount").value) || 1
+      )
+    );
+
+    button.disabled = true;
+
+    setMessage(
+      freeCreateMessage,
+      `Đang tạo ${count} key Free...`
+    );
+
+    try {
+      const newItems = [];
+
+      for (let index = 0; index < count; index += 1) {
+        const result = await adminApi(
+          "/api/admin/free/create",
+          {
+            planHours,
+            maxDevices
+          }
+        );
+
+        newItems.push(result.data);
+      }
+
+      freeCreatedKeys = [
+        ...newItems,
+        ...freeCreatedKeys
+      ];
+
+      renderFreeCreatedKeys();
+
+      setMessage(
+        freeCreateMessage,
+        `Đã tạo thành công ${newItems.length} key Free. Key Admin Free không tính vào thống kê Link4m.`,
+        "success"
+      );
+    } catch (error) {
+      setMessage(
+        freeCreateMessage,
+        error.message || "Không thể tạo key Free.",
+        "error"
+      );
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  freeCopyAllBtn.addEventListener("click", async () => {
+    if (!freeCreatedKeys.length) return;
+
+    await copyText(
+      freeCreatedKeys
+        .map(item => item.key)
+        .join("\n")
+    );
+
+    freeCopyAllBtn.textContent = "Đã sao chép ✓";
+
+    setTimeout(() => {
+      freeCopyAllBtn.textContent = "Sao chép tất cả";
+    }, 1300);
+  });
+
   $("createBtn").addEventListener("click", async () => {
     const button = $("createBtn");
 
@@ -662,6 +797,7 @@
   $("logoutBtn").addEventListener("click", () => {
     adminToken = "";
     createdKeys = [];
+    freeCreatedKeys = [];
 
     sessionStorage.removeItem(
       "sent_admin_token"
@@ -669,8 +805,10 @@
 
     tokenInput.value = "";
     renderCreatedKeys();
+    renderFreeCreatedKeys();
 
     setMessage(createMessage, "");
+    setMessage(freeCreateMessage, "");
     setMessage(revokeMessage, "");
     setMessage(statsMessage, "");
     setMessage(vipStatsMessage, "");
@@ -698,4 +836,5 @@
   }
 
   renderCreatedKeys();
+  renderFreeCreatedKeys();
 })();

@@ -138,6 +138,86 @@
 
       <section class="dashboard-hero" style="margin-top:18px">
         <div>
+          <span class="eyebrow">ADMIN FREE LICENSES</span>
+          <h1>Tạo key Free thủ công</h1>
+          <p>Chỉ Admin tạo được ở đây. Key này dùng cho app Free nhưng không được tính vào số liệu người vượt Link4m.</p>
+        </div>
+      </section>
+
+      <div class="dashboard-grid">
+        <section class="card create-card">
+          <div class="section-heading compact">
+            <span class="eyebrow">CREATE FREE LICENSE</span>
+            <h2>Tạo key Free</h2>
+            <p>Phù hợp khi bạn cần cấp key Free trực tiếp mà không bắt người dùng vượt Link4m.</p>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>Thời hạn Free</span>
+              <select id="freePlanHours">
+                <option value="24">24 giờ</option>
+                <option value="12">12 giờ</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Giới hạn thiết bị</span>
+              <select id="freeMaxDevices">
+                <option value="1">1 thiết bị</option>
+                <option value="2">2 thiết bị</option>
+                <option value="3">3 thiết bị</option>
+                <option value="5">5 thiết bị</option>
+                <option value="10">10 thiết bị</option>
+                <option value="0">Không giới hạn</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Số lượng key</span>
+              <input id="freeKeyCount" type="number" min="1" max="20" value="1" inputmode="numeric">
+            </label>
+          </div>
+
+          <div class="format-note">
+            <span class="format-dot"></span>
+            <code>SENT-FREEX-XXXXX-XXXXX</code>
+          </div>
+
+          <button id="freeCreateBtn" class="primary" type="button">
+            <span aria-hidden="true">＋</span>
+            <span>Tạo key Free</span>
+          </button>
+
+          <p id="freeCreateMessage" class="message" aria-live="polite"></p>
+        </section>
+
+        <section class="card output-card">
+          <div class="section-heading compact row-heading">
+            <div>
+              <span class="eyebrow">FREE SESSION OUTPUT</span>
+              <h2>Key Free vừa tạo</h2>
+            </div>
+
+            <button id="freeCopyAllBtn" class="secondary small" type="button" disabled>
+              Sao chép tất cả
+            </button>
+          </div>
+
+          <div id="freeEmptyResult" class="empty-state">
+            <div>
+              <span aria-hidden="true">◇</span>
+              <strong>Chưa có key Free mới</strong>
+              <p>Key Free do Admin tạo trong phiên này sẽ xuất hiện tại đây.</p>
+            </div>
+          </div>
+
+          <div id="freeResultList" class="result-list hidden"></div>
+        </section>
+      </div>
+
+      <section class="dashboard-hero" style="margin-top:18px">
+        <div>
           <span class="eyebrow">VIP / PAID LICENSES</span>
           <h1>Key bán / VIP</h1>
           <p>Chỉ ADMIN_TOKEN mới tạo được. Key Free/Link4m sẽ bị server từ chối khi đăng nhập app VIP.</p>
@@ -341,6 +421,6 @@
     </section>
   </main>
 
-  <script src="/sent-control.js?v=sent-admin-vip-1" defer></script>
+  <script src="/sent-control.js?v=sent-admin-free-vip-4" defer></script>
 </body>
 </html>

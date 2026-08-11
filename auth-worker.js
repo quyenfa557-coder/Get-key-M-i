@@ -63,6 +63,12 @@ function createVipKey() {
   return `SENT-VIP${randomPart(2)}-${randomPart(5)}-${randomPart(5)}`;
 }
 
+function createAdminFreeKey() {
+  // Visual prefix only. Absence from vip_keys is the real FREE authorization.
+  // It still matches the existing SENT-XXXXX-XXXXX-XXXXX parser in index.js.
+  return `SENT-FREE${randomPart(1)}-${randomPart(5)}-${randomPart(5)}`;
+}
+
 function normalizeDatabaseKey(value) {
   let key = String(value ?? "")
     .trim()
@@ -184,6 +190,19 @@ function normalizeMaxDevices(value) {
   }
 
   return maxDevices;
+}
+
+function normalizeFreePlanHours(value) {
+  const planHours = Number(value);
+  const allowed = new Set([12, 24]);
+
+  if (!Number.isInteger(planHours) || !allowed.has(planHours)) {
+    throw new Error(
+      "Gói Free không hợp lệ. Hỗ trợ 12 giờ hoặc 24 giờ."
+    );
+  }
+
+  return planHours;
 }
 
 function normalizeVipPlanHours(value) {
@@ -932,6 +951,106 @@ async function handleAccurateLink4mStats(request, env) {
   });
 }
 
+/* FREE admin APIs
+ *
+ * These keys are created only from the secret Admin page.
+ * They are deliberately NOT inserted into link4m_history, so Link4m
+ * analytics remain an exact count of users who actually completed Link4m.
+ * They are also NOT inserted into vip_keys, therefore the FREE product gate
+ * accepts them and the VIP product gate rejects them.
+ */
+
+async function insertUniqueAdminFreeKey(env, planHours, maxDevices) {
+  if (!env.DB) {
+    throw new Error("D1 database chưa được liên kết với Worker.");
+  }
+
+  const now = Date.now();
+  const expiresAt = now + planHours * 60 * 60 * 1000;
+
+  const initialBinding =
+    maxDevices === 1
+      ? null
+      : serializeDeviceBinding(maxDevices, []);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const licenseKey = createAdminFreeKey();
+
+    try {
+      await env.DB.prepare(
+        `INSERT INTO keys (
+           license_key,
+           plan_hours,
+           device_hash,
+           created_at,
+           expires_at,
+           status
+         )
+         VALUES (?, ?, ?, ?, ?, 'active')`
+      )
+        .bind(
+          licenseKey,
+          planHours,
+          initialBinding,
+          now,
+          expiresAt
+        )
+        .run();
+
+      return {
+        license_key: licenseKey,
+        plan_hours: planHours,
+        device_hash: initialBinding,
+        created_at: now,
+        claimed_at: null,
+        expires_at: expiresAt,
+        status: "active"
+      };
+    } catch (error) {
+      const message = String(error).toLowerCase();
+
+      if (
+        message.includes("unique") ||
+        message.includes("constraint")
+      ) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error(
+    "Không thể tạo key Free mới. Hãy thử lại."
+  );
+}
+
+async function handleAdminFreeCreate(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({
+      ok: false,
+      error: "Không có quyền tạo key Free."
+    }, 401);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const planHours = normalizeFreePlanHours(body.planHours);
+  const maxDevices = normalizeMaxDevices(body.maxDevices);
+
+  const row = await insertUniqueAdminFreeKey(
+    env,
+    planHours,
+    maxDevices
+  );
+
+  return json({
+    ok: true,
+    vip: false,
+    source: "admin_free",
+    data: mapKeyRow(row, Date.now())
+  }, 201);
+}
+
 /* VIP admin APIs */
 
 async function insertUniqueVipKey(env, planHours, maxDevices, note) {
@@ -1284,6 +1403,13 @@ export default {
         path === "/api/admin/link4m-stats"
       ) {
         return handleAccurateLink4mStats(request, env);
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/api/admin/free/create"
+      ) {
+        return handleAdminFreeCreate(request, env);
       }
 
       if (
