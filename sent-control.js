@@ -47,7 +47,9 @@
   function formatDeviceLimit(item) {
     const used = Number(item.devicesUsed) || 0;
     const limit = Number(item.maxDevices);
-    return limit === 0 ? `${used} / ∞ thiết bị` : `${used} / ${limit || 1} thiết bị`;
+    return limit === 0
+      ? `${used} / ∞ thiết bị`
+      : `${used} / ${limit || 1} thiết bị`;
   }
 
   async function adminApi(path, body = {}) {
@@ -107,14 +109,58 @@
     return "Hoạt động";
   }
 
+  function renderTrend(stats) {
+    const element = $("statTrend");
+    if (!element) return;
+
+    const trend = stats.todayVsYesterday || {};
+    const difference = Number(trend.difference || 0);
+    const percent = Number(trend.percentChange);
+
+    if (difference === 0) {
+      element.textContent = "Bằng hôm qua";
+      return;
+    }
+
+    const sign = difference > 0 ? "+" : "";
+    const percentageText = Number.isFinite(percent)
+      ? ` (${sign}${percent}%)`
+      : "";
+
+    element.textContent =
+      `${sign}${formatNumber(difference)} so với hôm qua${percentageText}`;
+  }
+
   function renderStats(payload) {
     const stats = payload.stats || {};
-    $("statTotal").textContent = formatNumber(stats.total);
-    $("statToday").textContent = formatNumber(stats.today);
-    $("statActive").textContent = formatNumber(stats.active);
-    $("statExpired").textContent = formatNumber(stats.expired);
 
-    const recent = Array.isArray(payload.recent) ? payload.recent : [];
+    $("statCompleted").textContent =
+      formatNumber(stats.completedSessions);
+
+    $("statTotal").textContent =
+      formatNumber(stats.total);
+
+    $("statToday").textContent =
+      formatNumber(stats.today);
+
+    $("statYesterday").textContent =
+      formatNumber(stats.yesterday);
+
+    $("statActive").textContent =
+      formatNumber(stats.active);
+
+    $("statExpired").textContent =
+      formatNumber(stats.expired);
+
+    $("statRevoked").textContent =
+      formatNumber(stats.revoked);
+
+    renderTrend(stats);
+
+    const recent = Array.isArray(payload.recent)
+      ? payload.recent
+      : [];
+
     recentList.replaceChildren();
 
     if (!recent.length) {
@@ -130,16 +176,21 @@
 
         const keyWrap = document.createElement("div");
         keyWrap.className = "recent-key";
+
         const code = document.createElement("code");
         code.textContent = item.key;
         keyWrap.append(code);
 
         const status = document.createElement("span");
-        const safeStatus = ["active", "expired", "revoked"].includes(item.status)
-          ? item.status
-          : "active";
-        status.className = `status-pill status-${safeStatus}`;
-        status.textContent = statusLabel(safeStatus);
+        const safeStatus =
+          ["active", "expired", "revoked"].includes(item.status)
+            ? item.status
+            : "active";
+
+        status.className =
+          `status-pill status-${safeStatus}`;
+        status.textContent =
+          statusLabel(safeStatus);
 
         const devices = document.createElement("span");
         devices.className = "device-count";
@@ -155,22 +206,44 @@
       }
     }
 
-    $("lastUpdated").textContent = `Cập nhật ${formatDate(payload.generatedAt || new Date().toISOString())}`;
+    $("lastUpdated").textContent =
+      `Cập nhật ${formatDate(
+        payload.generatedAt || new Date().toISOString()
+      )}`;
   }
 
   async function loadStats({ quiet = false } = {}) {
     const button = $("refreshStatsBtn");
     button.disabled = true;
     button.classList.add("loading");
-    if (!quiet) setMessage(statsMessage, "Đang tải dữ liệu Link4m...");
+
+    if (!quiet) {
+      setMessage(
+        statsMessage,
+        "Đang tải dữ liệu Link4m..."
+      );
+    }
 
     try {
-      const data = await adminApi("/api/admin/link4m-stats");
+      const data =
+        await adminApi("/api/admin/link4m-stats");
+
       renderStats(data);
-      setMessage(statsMessage, "Dữ liệu Link4m đã được cập nhật.", "success");
+
+      setMessage(
+        statsMessage,
+        "Dữ liệu Link4m đã được cập nhật chính xác theo UTC+7.",
+        "success"
+      );
+
       return data;
     } catch (error) {
-      setMessage(statsMessage, error.message || "Không thể tải thống kê Link4m.", "error");
+      setMessage(
+        statsMessage,
+        error.message ||
+          "Không thể tải thống kê Link4m.",
+        "error"
+      );
       throw error;
     } finally {
       button.disabled = false;
@@ -203,19 +276,25 @@
       code.textContent = item.key;
 
       const meta = document.createElement("span");
-      const limitText = Number(item.maxDevices) === 0
-        ? "không giới hạn thiết bị"
-        : `${Number(item.maxDevices) || 1} thiết bị`;
-      meta.textContent = `${item.planHours || 24} giờ • ${limitText}`;
+      const limitText =
+        Number(item.maxDevices) === 0
+          ? "không giới hạn thiết bị"
+          : `${Number(item.maxDevices) || 1} thiết bị`;
+
+      meta.textContent =
+        `${item.planHours || 24} giờ • ${limitText}`;
 
       const button = document.createElement("button");
       button.type = "button";
       button.className = "copy-one";
       button.textContent = "Sao chép";
+
       button.addEventListener("click", async () => {
         await copyText(item.key);
         button.textContent = "Đã chép ✓";
-        setTimeout(() => { button.textContent = "Sao chép"; }, 1200);
+        setTimeout(() => {
+          button.textContent = "Sao chép";
+        }, 1200);
       });
 
       main.append(code, meta);
@@ -229,21 +308,40 @@
     setMessage(loginMessage, "Đang xác thực token...");
 
     try {
-      const data = await adminApi("/api/admin/link4m-stats");
+      const data =
+        await adminApi("/api/admin/link4m-stats");
+
       if ($("rememberSession").checked) {
-        sessionStorage.setItem("sent_admin_token", adminToken);
+        sessionStorage.setItem(
+          "sent_admin_token",
+          adminToken
+        );
       } else {
-        sessionStorage.removeItem("sent_admin_token");
+        sessionStorage.removeItem(
+          "sent_admin_token"
+        );
       }
+
       renderStats(data);
       showDashboard();
       setMessage(loginMessage, "");
-      setMessage(statsMessage, "Đã kết nối với dữ liệu Link4m.", "success");
+
+      setMessage(
+        statsMessage,
+        "Đã kết nối với dữ liệu Link4m.",
+        "success"
+      );
     } catch (error) {
       adminToken = "";
-      sessionStorage.removeItem("sent_admin_token");
+      sessionStorage.removeItem(
+        "sent_admin_token"
+      );
       showLogin();
-      setMessage(loginMessage, error.message, "error");
+      setMessage(
+        loginMessage,
+        error.message,
+        "error"
+      );
       throw error;
     }
   }
@@ -251,7 +349,8 @@
   $("toggleToken").addEventListener("click", () => {
     const hidden = tokenInput.type === "password";
     tokenInput.type = hidden ? "text" : "password";
-    $("toggleToken").textContent = hidden ? "Ẩn" : "Hiện";
+    $("toggleToken").textContent =
+      hidden ? "Ẩn" : "Hiện";
   });
 
   $("loginBtn").addEventListener("click", async () => {
@@ -259,121 +358,240 @@
     const value = tokenInput.value.trim();
 
     if (!value) {
-      setMessage(loginMessage, "Hãy nhập ADMIN_TOKEN.", "error");
+      setMessage(
+        loginMessage,
+        "Hãy nhập ADMIN_TOKEN.",
+        "error"
+      );
       return;
     }
 
     button.disabled = true;
+
     try {
       await loginWithToken(value);
     } catch {
-      // Lỗi đã được hiển thị trong loginWithToken.
+      // Lỗi đã hiển thị.
     } finally {
       button.disabled = false;
     }
   });
 
-  $("refreshStatsBtn").addEventListener("click", async () => {
-    try {
-      await loadStats();
-    } catch (error) {
-      if (/token/i.test(error.message)) {
-        sessionStorage.removeItem("sent_admin_token");
-        showLogin();
+  $("refreshStatsBtn").addEventListener(
+    "click",
+    async () => {
+      try {
+        await loadStats();
+      } catch (error) {
+        if (/token/i.test(error.message)) {
+          sessionStorage.removeItem(
+            "sent_admin_token"
+          );
+          showLogin();
+        }
       }
     }
-  });
+  );
 
-  $("createBtn").addEventListener("click", async () => {
-    const button = $("createBtn");
-    const planHours = Number($("planHours").value);
-    const maxDevices = Number($("maxDevices").value);
-    const count = Math.max(1, Math.min(20, Number($("keyCount").value) || 1));
+  $("createBtn").addEventListener(
+    "click",
+    async () => {
+      const button = $("createBtn");
+      const planHours =
+        Number($("planHours").value);
+      const maxDevices =
+        Number($("maxDevices").value);
 
-    button.disabled = true;
-    setMessage(createMessage, `Đang tạo ${count} key SENT...`);
+      const count = Math.max(
+        1,
+        Math.min(
+          20,
+          Number($("keyCount").value) || 1
+        )
+      );
 
-    try {
-      const newItems = [];
+      button.disabled = true;
 
-      for (let index = 0; index < count; index += 1) {
-        const result = await adminApi("/api/admin/create-key", {
-          planHours,
-          maxDevices
-        });
-        newItems.push(result.data);
+      setMessage(
+        createMessage,
+        `Đang tạo ${count} key SENT...`
+      );
+
+      try {
+        const newItems = [];
+
+        for (
+          let index = 0;
+          index < count;
+          index += 1
+        ) {
+          const result =
+            await adminApi(
+              "/api/admin/create-key",
+              {
+                planHours,
+                maxDevices
+              }
+            );
+
+          newItems.push(result.data);
+        }
+
+        createdKeys = [
+          ...newItems,
+          ...createdKeys
+        ];
+
+        renderKeys();
+
+        setMessage(
+          createMessage,
+          `Đã tạo thành công ${newItems.length} key Admin.`,
+          "success"
+        );
+      } catch (error) {
+        if (/token/i.test(error.message)) {
+          sessionStorage.removeItem(
+            "sent_admin_token"
+          );
+        }
+
+        setMessage(
+          createMessage,
+          error.message ||
+            "Không thể tạo key.",
+          "error"
+        );
+      } finally {
+        button.disabled = false;
+      }
+    }
+  );
+
+  copyAllBtn.addEventListener(
+    "click",
+    async () => {
+      if (!createdKeys.length) return;
+
+      await copyText(
+        createdKeys
+          .map((item) => item.key)
+          .join("\n")
+      );
+
+      copyAllBtn.textContent =
+        "Đã sao chép ✓";
+
+      setTimeout(() => {
+        copyAllBtn.textContent =
+          "Sao chép tất cả";
+      }, 1300);
+    }
+  );
+
+  $("revokeBtn").addEventListener(
+    "click",
+    async () => {
+      const button = $("revokeBtn");
+      const key =
+        cleanKey($("revokeKey").value);
+
+      if (!key) {
+        setMessage(
+          revokeMessage,
+          "Hãy nhập key cần thu hồi.",
+          "error"
+        );
+        return;
       }
 
-      createdKeys = [...newItems, ...createdKeys];
+      button.disabled = true;
+      setMessage(
+        revokeMessage,
+        "Đang thu hồi key..."
+      );
+
+      try {
+        const result =
+          await adminApi(
+            "/api/admin/revoke",
+            { key }
+          );
+
+        if (!result.changed) {
+          throw new Error(
+            "Không tìm thấy key hoặc key đã bị thu hồi."
+          );
+        }
+
+        createdKeys =
+          createdKeys.filter(
+            (item) => item.key !== key
+          );
+
+        renderKeys();
+        $("revokeKey").value = "";
+
+        setMessage(
+          revokeMessage,
+          "Đã thu hồi key thành công.",
+          "success"
+        );
+
+        await loadStats({
+          quiet: true
+        }).catch(() => {});
+      } catch (error) {
+        setMessage(
+          revokeMessage,
+          error.message ||
+            "Không thể thu hồi key.",
+          "error"
+        );
+      } finally {
+        button.disabled = false;
+      }
+    }
+  );
+
+  $("logoutBtn").addEventListener(
+    "click",
+    () => {
+      adminToken = "";
+      createdKeys = [];
+
+      sessionStorage.removeItem(
+        "sent_admin_token"
+      );
+
+      tokenInput.value = "";
       renderKeys();
-      setMessage(createMessage, `Đã tạo thành công ${newItems.length} key Admin.`, "success");
-    } catch (error) {
-      if (/token/i.test(error.message)) {
-        sessionStorage.removeItem("sent_admin_token");
+
+      setMessage(createMessage, "");
+      setMessage(revokeMessage, "");
+      setMessage(statsMessage, "");
+      showLogin();
+    }
+  );
+
+  tokenInput.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Enter") {
+        $("loginBtn").click();
       }
-      setMessage(createMessage, error.message || "Không thể tạo key.", "error");
-    } finally {
-      button.disabled = false;
     }
-  });
+  );
 
-  copyAllBtn.addEventListener("click", async () => {
-    if (!createdKeys.length) return;
-    await copyText(createdKeys.map((item) => item.key).join("\n"));
-    copyAllBtn.textContent = "Đã sao chép ✓";
-    setTimeout(() => { copyAllBtn.textContent = "Sao chép tất cả"; }, 1300);
-  });
+  const savedToken =
+    sessionStorage.getItem(
+      "sent_admin_token"
+    );
 
-  $("revokeBtn").addEventListener("click", async () => {
-    const button = $("revokeBtn");
-    const key = cleanKey($("revokeKey").value);
-
-    if (!key) {
-      setMessage(revokeMessage, "Hãy nhập key cần thu hồi.", "error");
-      return;
-    }
-
-    button.disabled = true;
-    setMessage(revokeMessage, "Đang thu hồi key...");
-
-    try {
-      const result = await adminApi("/api/admin/revoke", { key });
-      if (!result.changed) {
-        throw new Error("Không tìm thấy key hoặc key đã bị thu hồi.");
-      }
-
-      createdKeys = createdKeys.filter((item) => item.key !== key);
-      renderKeys();
-      $("revokeKey").value = "";
-      setMessage(revokeMessage, "Đã thu hồi key thành công.", "success");
-      await loadStats({ quiet: true }).catch(() => {});
-    } catch (error) {
-      setMessage(revokeMessage, error.message || "Không thể thu hồi key.", "error");
-    } finally {
-      button.disabled = false;
-    }
-  });
-
-  $("logoutBtn").addEventListener("click", () => {
-    adminToken = "";
-    createdKeys = [];
-    sessionStorage.removeItem("sent_admin_token");
-    tokenInput.value = "";
-    renderKeys();
-    setMessage(createMessage, "");
-    setMessage(revokeMessage, "");
-    setMessage(statsMessage, "");
-    showLogin();
-  });
-
-  tokenInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") $("loginBtn").click();
-  });
-
-  const savedToken = sessionStorage.getItem("sent_admin_token");
   if (savedToken) {
     tokenInput.value = savedToken;
-    loginWithToken(savedToken).catch(() => {});
+    loginWithToken(savedToken)
+      .catch(() => {});
   }
 
   renderKeys();

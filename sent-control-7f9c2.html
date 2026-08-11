@@ -57,9 +57,9 @@
     <section id="dashboard" class="dashboard hidden">
       <section class="dashboard-hero">
         <div>
-          <span class="eyebrow">LINK4M ANALYTICS</span>
+          <span class="eyebrow">LINK4M ANALYTICS V2</span>
           <h1>Tổng quan hệ thống key</h1>
-          <p>Chỉ thống kê key được tạo sau khi người dùng hoàn tất Link4m. Key do Admin tạo không được tính.</p>
+          <p>Chỉ thống kê key được tạo sau khi người dùng hoàn tất Link4m. Key do Admin tạo không được tính. Mốc ngày cố định theo giờ Việt Nam (UTC+7).</p>
         </div>
         <button id="refreshStatsBtn" class="secondary refresh-button" type="button">
           <span aria-hidden="true">↻</span>
@@ -69,20 +69,38 @@
 
       <div class="stats-grid" aria-live="polite">
         <article class="stat-card stat-primary">
+          <div class="stat-icon" aria-hidden="true">↗</div>
+          <div>
+            <span>Lượt nhận thành công</span>
+            <strong id="statCompleted">—</strong>
+            <small>Phiên Link4m hoàn tất hợp lệ</small>
+          </div>
+        </article>
+
+        <article class="stat-card">
           <div class="stat-icon" aria-hidden="true">#</div>
           <div>
             <span>Tổng key Link4m</span>
             <strong id="statTotal">—</strong>
-            <small>Từ trước đến nay</small>
+            <small>Key duy nhất từ trước đến nay</small>
           </div>
         </article>
 
         <article class="stat-card">
           <div class="stat-icon" aria-hidden="true">＋</div>
           <div>
-            <span>Tạo hôm nay</span>
+            <span>Key hôm nay</span>
             <strong id="statToday">—</strong>
-            <small>Theo múi giờ Việt Nam</small>
+            <small id="statTrend">Theo múi giờ Việt Nam</small>
+          </div>
+        </article>
+
+        <article class="stat-card">
+          <div class="stat-icon" aria-hidden="true">−</div>
+          <div>
+            <span>Key hôm qua</span>
+            <strong id="statYesterday">—</strong>
+            <small>00:00 → 23:59 UTC+7</small>
           </div>
         </article>
 
@@ -100,7 +118,16 @@
           <div>
             <span>Đã hết hạn</span>
             <strong id="statExpired">—</strong>
-            <small>Không gồm key Admin</small>
+            <small>Không gồm key đã thu hồi</small>
+          </div>
+        </article>
+
+        <article class="stat-card">
+          <div class="stat-icon" aria-hidden="true">×</div>
+          <div>
+            <span>Đã thu hồi</span>
+            <strong id="statRevoked">—</strong>
+            <small>Chỉ tính key sinh từ Link4m</small>
           </div>
         </article>
       </div>
@@ -223,6 +250,6 @@
     </section>
   </main>
 
-  <script src="/sent-control.js?v=sent-admin-6" defer></script>
+  <script src="/sent-control.js?v=sent-admin-7" defer></script>
 </body>
 </html>
