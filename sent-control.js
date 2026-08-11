@@ -2,23 +2,32 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
+
   const loginCard = $("loginCard");
   const dashboard = $("dashboard");
   const tokenInput = $("adminToken");
+
   const loginMessage = $("loginMessage");
   const createMessage = $("createMessage");
   const revokeMessage = $("revokeMessage");
   const statsMessage = $("statsMessage");
+  const vipStatsMessage = $("vipStatsMessage");
+
   const resultList = $("resultList");
   const emptyResult = $("emptyResult");
   const copyAllBtn = $("copyAllBtn");
+
   const recentList = $("recentList");
   const recentEmpty = $("recentEmpty");
+
+  const vipRecentList = $("vipRecentList");
+  const vipRecentEmpty = $("vipRecentEmpty");
 
   let adminToken = "";
   let createdKeys = [];
 
   function setMessage(element, text, type = "") {
+    if (!element) return;
     element.textContent = text;
     element.className = `message ${type}`.trim();
   }
@@ -44,12 +53,26 @@
     }).format(date);
   }
 
+  function formatPlan(hours) {
+    const value = Number(hours) || 0;
+    if (value > 0 && value % 24 === 0) {
+      return `${value / 24} ngày`;
+    }
+    return `${value} giờ`;
+  }
+
   function formatDeviceLimit(item) {
     const used = Number(item.devicesUsed) || 0;
     const limit = Number(item.maxDevices);
     return limit === 0
       ? `${used} / ∞ thiết bị`
       : `${used} / ${limit || 1} thiết bị`;
+  }
+
+  function statusLabel(status) {
+    if (status === "revoked") return "Đã thu hồi";
+    if (status === "expired") return "Hết hạn";
+    return "Hoạt động";
   }
 
   async function adminApi(path, body = {}) {
@@ -70,9 +93,16 @@
 
     if (!response.ok || !data.ok) {
       if (response.status === 401) {
-        throw new Error("Admin token không đúng hoặc chưa được cấu hình.");
+        throw new Error(
+          "Admin token không đúng hoặc chưa được cấu hình."
+        );
       }
-      throw new Error(data.error || "Yêu cầu quản trị thất bại.");
+
+      throw new Error(
+        data.error ||
+        data.reason ||
+        "Yêu cầu quản trị thất bại."
+      );
     }
 
     return data;
@@ -103,12 +133,6 @@
     }
   }
 
-  function statusLabel(status) {
-    if (status === "revoked") return "Đã thu hồi";
-    if (status === "expired") return "Hết hạn";
-    return "Hoạt động";
-  }
-
   function renderTrend(stats) {
     const element = $("statTrend");
     if (!element) return;
@@ -131,27 +155,70 @@
       `${sign}${formatNumber(difference)} so với hôm qua${percentageText}`;
   }
 
-  function renderStats(payload) {
+  function makeRecentRow(item, { vip = false } = {}) {
+    const row = document.createElement("div");
+    row.className = "recent-row";
+
+    const keyWrap = document.createElement("div");
+    keyWrap.className = "recent-key";
+
+    const code = document.createElement("code");
+    code.textContent = item.key;
+    keyWrap.append(code);
+
+    if (vip && item.note) {
+      const note = document.createElement("small");
+      note.textContent = ` • ${item.note}`;
+      note.style.color = "#8fa4c1";
+      keyWrap.append(note);
+    }
+
+    const status = document.createElement("span");
+    const safeStatus = [
+      "active",
+      "expired",
+      "revoked"
+    ].includes(item.status)
+      ? item.status
+      : "active";
+
+    status.className = `status-pill status-${safeStatus}`;
+    status.textContent = statusLabel(safeStatus);
+
+    const devices = document.createElement("span");
+    devices.className = "device-count";
+    devices.textContent = formatDeviceLimit(item);
+
+    const createdAt = document.createElement("time");
+    createdAt.className = "created-time";
+    createdAt.dateTime = item.createdAt || "";
+    createdAt.textContent = formatDate(item.createdAt);
+
+    row.append(
+      keyWrap,
+      status,
+      devices,
+      createdAt
+    );
+
+    return row;
+  }
+
+  function renderFreeStats(payload) {
     const stats = payload.stats || {};
 
     $("statCompleted").textContent =
       formatNumber(stats.completedSessions);
-
     $("statTotal").textContent =
       formatNumber(stats.total);
-
     $("statToday").textContent =
       formatNumber(stats.today);
-
     $("statYesterday").textContent =
       formatNumber(stats.yesterday);
-
     $("statActive").textContent =
       formatNumber(stats.active);
-
     $("statExpired").textContent =
       formatNumber(stats.expired);
-
     $("statRevoked").textContent =
       formatNumber(stats.revoked);
 
@@ -171,79 +238,111 @@
       recentList.classList.remove("hidden");
 
       for (const item of recent) {
-        const row = document.createElement("div");
-        row.className = "recent-row";
-
-        const keyWrap = document.createElement("div");
-        keyWrap.className = "recent-key";
-
-        const code = document.createElement("code");
-        code.textContent = item.key;
-        keyWrap.append(code);
-
-        const status = document.createElement("span");
-        const safeStatus =
-          ["active", "expired", "revoked"].includes(item.status)
-            ? item.status
-            : "active";
-
-        status.className =
-          `status-pill status-${safeStatus}`;
-        status.textContent =
-          statusLabel(safeStatus);
-
-        const devices = document.createElement("span");
-        devices.className = "device-count";
-        devices.textContent = formatDeviceLimit(item);
-
-        const createdAt = document.createElement("time");
-        createdAt.className = "created-time";
-        createdAt.dateTime = item.createdAt || "";
-        createdAt.textContent = formatDate(item.createdAt);
-
-        row.append(keyWrap, status, devices, createdAt);
-        recentList.append(row);
+        recentList.append(
+          makeRecentRow(item)
+        );
       }
     }
 
     $("lastUpdated").textContent =
       `Cập nhật ${formatDate(
-        payload.generatedAt || new Date().toISOString()
+        payload.generatedAt ||
+        new Date().toISOString()
       )}`;
   }
 
-  async function loadStats({ quiet = false } = {}) {
+  function renderVipStats(payload) {
+    const stats = payload.stats || {};
+
+    $("vipStatTotal").textContent =
+      formatNumber(stats.total);
+    $("vipStatActive").textContent =
+      formatNumber(stats.active);
+    $("vipStatExpired").textContent =
+      formatNumber(stats.expired);
+    $("vipStatRevoked").textContent =
+      formatNumber(stats.revoked);
+
+    const recent = Array.isArray(payload.recent)
+      ? payload.recent
+      : [];
+
+    vipRecentList.replaceChildren();
+
+    if (!recent.length) {
+      vipRecentEmpty.classList.remove("hidden");
+      vipRecentList.classList.add("hidden");
+    } else {
+      vipRecentEmpty.classList.add("hidden");
+      vipRecentList.classList.remove("hidden");
+
+      for (const item of recent) {
+        vipRecentList.append(
+          makeRecentRow(item, { vip: true })
+        );
+      }
+    }
+
+    $("vipLastUpdated").textContent =
+      `Cập nhật ${formatDate(
+        payload.generatedAt ||
+        new Date().toISOString()
+      )}`;
+  }
+
+  async function loadAllStats({ quiet = false } = {}) {
     const button = $("refreshStatsBtn");
+
     button.disabled = true;
     button.classList.add("loading");
 
     if (!quiet) {
       setMessage(
         statsMessage,
-        "Đang tải dữ liệu Link4m..."
+        "Đang tải dữ liệu Free/Link4m..."
+      );
+
+      setMessage(
+        vipStatsMessage,
+        "Đang tải dữ liệu VIP..."
       );
     }
 
     try {
-      const data =
-        await adminApi("/api/admin/link4m-stats");
+      const [freeData, vipData] = await Promise.all([
+        adminApi("/api/admin/link4m-stats"),
+        adminApi("/api/admin/vip/stats")
+      ]);
 
-      renderStats(data);
+      renderFreeStats(freeData);
+      renderVipStats(vipData);
 
       setMessage(
         statsMessage,
-        "Dữ liệu Link4m đã được cập nhật chính xác theo UTC+7.",
+        "Dữ liệu Free/Link4m đã cập nhật theo UTC+7.",
         "success"
       );
 
-      return data;
+      setMessage(
+        vipStatsMessage,
+        "Dữ liệu key bán/VIP đã cập nhật.",
+        "success"
+      );
+
+      return { freeData, vipData };
     } catch (error) {
       setMessage(
         statsMessage,
-        error.message ||
-          "Không thể tải thống kê Link4m.",
+        error.message || "Không thể tải thống kê.",
         "error"
       );
+
+      setMessage(
+        vipStatsMessage,
+        error.message || "Không thể tải thống kê VIP.",
+        "error"
+      );
+
       throw error;
     } finally {
       button.disabled = false;
@@ -251,7 +350,7 @@
     }
   }
 
-  function renderKeys() {
+  function renderCreatedKeys() {
     resultList.replaceChildren();
 
     if (!createdKeys.length) {
@@ -265,7 +364,7 @@
     resultList.classList.remove("hidden");
     copyAllBtn.disabled = false;
 
-    createdKeys.forEach((item) => {
+    createdKeys.forEach(item => {
       const row = document.createElement("div");
       row.className = "key-item";
 
@@ -281,8 +380,13 @@
           ? "không giới hạn thiết bị"
           : `${Number(item.maxDevices) || 1} thiết bị`;
 
+      const noteText =
+        item.note
+          ? ` • ${item.note}`
+          : "";
+
       meta.textContent =
-        `${item.planHours || 24} giờ • ${limitText}`;
+        `VIP • ${formatPlan(item.planHours)} • ${limitText}${noteText}`;
 
       const button = document.createElement("button");
       button.type = "button";
@@ -292,6 +396,7 @@
       button.addEventListener("click", async () => {
         await copyText(item.key);
         button.textContent = "Đã chép ✓";
+
         setTimeout(() => {
           button.textContent = "Sao chép";
         }, 1200);
@@ -305,11 +410,16 @@
 
   async function loginWithToken(value) {
     adminToken = value;
-    setMessage(loginMessage, "Đang xác thực token...");
+
+    setMessage(
+      loginMessage,
+      "Đang xác thực token..."
+    );
 
     try {
-      const data =
-        await adminApi("/api/admin/link4m-stats");
+      const data = await loadAllStats({
+        quiet: true
+      });
 
       if ($("rememberSession").checked) {
         sessionStorage.setItem(
@@ -322,26 +432,37 @@
         );
       }
 
-      renderStats(data);
       showDashboard();
       setMessage(loginMessage, "");
 
       setMessage(
         statsMessage,
-        "Đã kết nối với dữ liệu Link4m.",
+        "Đã kết nối dữ liệu Free/Link4m.",
         "success"
       );
+
+      setMessage(
+        vipStatsMessage,
+        "Đã kết nối dữ liệu VIP.",
+        "success"
+      );
+
+      return data;
     } catch (error) {
       adminToken = "";
+
       sessionStorage.removeItem(
         "sent_admin_token"
       );
+
       showLogin();
+
       setMessage(
         loginMessage,
         error.message,
         "error"
       );
+
       throw error;
     }
   }
@@ -377,211 +498,191 @@
     }
   });
 
-  $("refreshStatsBtn").addEventListener(
-    "click",
-    async () => {
-      try {
-        await loadStats();
-      } catch (error) {
-        if (/token/i.test(error.message)) {
-          sessionStorage.removeItem(
-            "sent_admin_token"
-          );
-          showLogin();
-        }
+  $("refreshStatsBtn").addEventListener("click", async () => {
+    try {
+      await loadAllStats();
+    } catch (error) {
+      if (/token/i.test(error.message)) {
+        sessionStorage.removeItem(
+          "sent_admin_token"
+        );
+        showLogin();
       }
     }
-  );
+  });
 
-  $("createBtn").addEventListener(
-    "click",
-    async () => {
-      const button = $("createBtn");
-      const planHours =
-        Number($("planHours").value);
-      const maxDevices =
-        Number($("maxDevices").value);
+  $("createBtn").addEventListener("click", async () => {
+    const button = $("createBtn");
 
-      const count = Math.max(
-        1,
-        Math.min(
-          20,
-          Number($("keyCount").value) || 1
-        )
-      );
+    const planHours =
+      Number($("planHours").value);
+    const maxDevices =
+      Number($("maxDevices").value);
+    const note =
+      $("vipNote").value.trim();
 
-      button.disabled = true;
+    const count = Math.max(
+      1,
+      Math.min(
+        20,
+        Number($("keyCount").value) || 1
+      )
+    );
+
+    button.disabled = true;
+
+    setMessage(
+      createMessage,
+      `Đang tạo ${count} key bán/VIP...`
+    );
+
+    try {
+      const newItems = [];
+
+      for (let index = 0; index < count; index += 1) {
+        const result = await adminApi(
+          "/api/admin/vip/create",
+          {
+            planHours,
+            maxDevices,
+            note
+          }
+        );
+
+        newItems.push(result.data);
+      }
+
+      createdKeys = [
+        ...newItems,
+        ...createdKeys
+      ];
+
+      renderCreatedKeys();
 
       setMessage(
         createMessage,
-        `Đang tạo ${count} key SENT...`
+        `Đã tạo thành công ${newItems.length} key VIP.`,
+        "success"
       );
 
-      try {
-        const newItems = [];
-
-        for (
-          let index = 0;
-          index < count;
-          index += 1
-        ) {
-          const result =
-            await adminApi(
-              "/api/admin/create-key",
-              {
-                planHours,
-                maxDevices
-              }
-            );
-
-          newItems.push(result.data);
-        }
-
-        createdKeys = [
-          ...newItems,
-          ...createdKeys
-        ];
-
-        renderKeys();
-
-        setMessage(
-          createMessage,
-          `Đã tạo thành công ${newItems.length} key Admin.`,
-          "success"
-        );
-      } catch (error) {
-        if (/token/i.test(error.message)) {
-          sessionStorage.removeItem(
-            "sent_admin_token"
-          );
-        }
-
-        setMessage(
-          createMessage,
-          error.message ||
-            "Không thể tạo key.",
-          "error"
-        );
-      } finally {
-        button.disabled = false;
-      }
+      await loadAllStats({
+        quiet: true
+      }).catch(() => {});
+    } catch (error) {
+      setMessage(
+        createMessage,
+        error.message || "Không thể tạo key VIP.",
+        "error"
+      );
+    } finally {
+      button.disabled = false;
     }
-  );
+  });
 
-  copyAllBtn.addEventListener(
-    "click",
-    async () => {
-      if (!createdKeys.length) return;
+  copyAllBtn.addEventListener("click", async () => {
+    if (!createdKeys.length) return;
 
-      await copyText(
-        createdKeys
-          .map((item) => item.key)
-          .join("\n")
-      );
+    await copyText(
+      createdKeys
+        .map(item => item.key)
+        .join("\n")
+    );
 
+    copyAllBtn.textContent =
+      "Đã sao chép ✓";
+
+    setTimeout(() => {
       copyAllBtn.textContent =
-        "Đã sao chép ✓";
+        "Sao chép tất cả";
+    }, 1300);
+  });
 
-      setTimeout(() => {
-        copyAllBtn.textContent =
-          "Sao chép tất cả";
-      }, 1300);
-    }
-  );
+  $("revokeBtn").addEventListener("click", async () => {
+    const button = $("revokeBtn");
+    const key = cleanKey(
+      $("revokeKey").value
+    );
 
-  $("revokeBtn").addEventListener(
-    "click",
-    async () => {
-      const button = $("revokeBtn");
-      const key =
-        cleanKey($("revokeKey").value);
-
-      if (!key) {
-        setMessage(
-          revokeMessage,
-          "Hãy nhập key cần thu hồi.",
-          "error"
-        );
-        return;
-      }
-
-      button.disabled = true;
+    if (!key) {
       setMessage(
         revokeMessage,
-        "Đang thu hồi key..."
+        "Hãy nhập key cần thu hồi.",
+        "error"
+      );
+      return;
+    }
+
+    button.disabled = true;
+
+    setMessage(
+      revokeMessage,
+      "Đang thu hồi key..."
+    );
+
+    try {
+      const result = await adminApi(
+        "/api/admin/revoke",
+        { key }
       );
 
-      try {
-        const result =
-          await adminApi(
-            "/api/admin/revoke",
-            { key }
-          );
-
-        if (!result.changed) {
-          throw new Error(
-            "Không tìm thấy key hoặc key đã bị thu hồi."
-          );
-        }
-
-        createdKeys =
-          createdKeys.filter(
-            (item) => item.key !== key
-          );
-
-        renderKeys();
-        $("revokeKey").value = "";
-
-        setMessage(
-          revokeMessage,
-          "Đã thu hồi key thành công.",
-          "success"
+      if (!result.changed) {
+        throw new Error(
+          "Không tìm thấy key hoặc key đã bị thu hồi."
         );
-
-        await loadStats({
-          quiet: true
-        }).catch(() => {});
-      } catch (error) {
-        setMessage(
-          revokeMessage,
-          error.message ||
-            "Không thể thu hồi key.",
-          "error"
-        );
-      } finally {
-        button.disabled = false;
       }
-    }
-  );
 
-  $("logoutBtn").addEventListener(
-    "click",
-    () => {
-      adminToken = "";
-      createdKeys = [];
+      createdKeys =
+        createdKeys.filter(
+          item => item.key !== key
+        );
 
-      sessionStorage.removeItem(
-        "sent_admin_token"
+      renderCreatedKeys();
+      $("revokeKey").value = "";
+
+      setMessage(
+        revokeMessage,
+        "Đã thu hồi key thành công.",
+        "success"
       );
 
-      tokenInput.value = "";
-      renderKeys();
-
-      setMessage(createMessage, "");
-      setMessage(revokeMessage, "");
-      setMessage(statsMessage, "");
-      showLogin();
+      await loadAllStats({
+        quiet: true
+      }).catch(() => {});
+    } catch (error) {
+      setMessage(
+        revokeMessage,
+        error.message || "Không thể thu hồi key.",
+        "error"
+      );
+    } finally {
+      button.disabled = false;
     }
-  );
+  });
 
-  tokenInput.addEventListener(
-    "keydown",
-    (event) => {
-      if (event.key === "Enter") {
-        $("loginBtn").click();
-      }
+  $("logoutBtn").addEventListener("click", () => {
+    adminToken = "";
+    createdKeys = [];
+
+    sessionStorage.removeItem(
+      "sent_admin_token"
+    );
+
+    tokenInput.value = "";
+    renderCreatedKeys();
+
+    setMessage(createMessage, "");
+    setMessage(revokeMessage, "");
+    setMessage(statsMessage, "");
+    setMessage(vipStatsMessage, "");
+
+    showLogin();
+  });
+
+  tokenInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      $("loginBtn").click();
     }
-  );
+  });
 
   const savedToken =
     sessionStorage.getItem(
@@ -590,9 +691,11 @@
 
   if (savedToken) {
     tokenInput.value = savedToken;
-    loginWithToken(savedToken)
-      .catch(() => {});
+
+    loginWithToken(
+      savedToken
+    ).catch(() => {});
   }
 
-  renderKeys();
+  renderCreatedKeys();
 })();

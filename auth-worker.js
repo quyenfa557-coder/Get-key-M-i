@@ -1,20 +1,30 @@
-// Sent Tweaks compatibility entry.
-// It upgrades older JSON clients to the signed Auth V4 request shape,
-// then delegates all real validation to index.js (D1, expiry, device binding, signatures).
+// Sent Tweaks gateway.
+// FREE: Link4m keys use the existing /api/claim + /api/verify flow.
+// VIP : admin-only keys are tagged in D1 table vip_keys.
+// Existing index.js remains responsible for expiry, device binding,
+// Auth V4 signatures and legacy-client compatibility.
 import signedWorker from "./index.js";
 
 const AUTH_PROTOCOL_VERSION = 4;
 const DEFAULT_BUILD_ID = "sent-menu-2026.08.07-r1";
 const DEFAULT_CLIENT_VERSION = "5.2.1";
 
+const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MULTI_DEVICE_PREFIX = "SENTMULTI:v1:";
+const VIP_PRODUCT_HEADER = "x-sent-product";
+const VIP_PRODUCT_VALUE = "vip";
+
+const JSON_HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+};
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff"
-    }
+    headers: JSON_HEADERS
   });
 }
 
@@ -35,6 +45,47 @@ function randomNonceHex(byteLength = 24) {
     bytes,
     byte => byte.toString(16).padStart(2, "0")
   ).join("");
+}
+
+function randomPart(length = 5) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(
+    bytes,
+    byte => alphabet[byte % alphabet.length]
+  ).join("");
+}
+
+function createVipKey() {
+  // Still matches SENT-XXXXX-XXXXX-XXXXX used by index.js.
+  // The vip_keys table is the real authorization flag.
+  return `SENT-VIP${randomPart(2)}-${randomPart(5)}-${randomPart(5)}`;
+}
+
+function normalizeDatabaseKey(value) {
+  let key = String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\u0000/g, "")
+    .replace(/[‐‑‒–—−]/g, "-")
+    .replace(/\s+/g, "");
+
+  while (key.startsWith("SUNNY-SUNNY-")) {
+    key = key.slice("SUNNY-".length);
+  }
+
+  if (key.startsWith("SUNNY-SENT-")) {
+    key = key.slice("SUNNY-".length);
+  }
+
+  if (/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(key)) {
+    key = `SUNNY-${key}`;
+  } else if (/^[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)) {
+    key = `SENT-${key}`;
+  }
+
+  return key;
 }
 
 function looksLikeModernV4(body) {
@@ -67,31 +118,19 @@ async function upgradeLegacyJsonRequest(request, env) {
     return request;
   }
 
-  // Do not alter a complete Auth V4 request.
   if (looksLikeModernV4(body)) {
     return request;
   }
 
   const key = firstString(body, [
-    "key",
-    "licenseKey",
-    "license_key",
-    "userKey",
-    "user_key",
-    "code"
+    "key", "licenseKey", "license_key", "userKey", "user_key", "code"
   ]);
 
   const deviceId = firstString(body, [
-    "deviceId",
-    "device_id",
-    "stableDeviceId",
-    "stable_device_id",
-    "androidId",
-    "android_id",
-    "device"
+    "deviceId", "device_id", "stableDeviceId", "stable_device_id",
+    "androidId", "android_id", "device"
   ]);
 
-  // Let index.js return the normal structured error for truly malformed requests.
   if (!key || !deviceId) {
     return request;
   }
@@ -103,12 +142,8 @@ async function upgradeLegacyJsonRequest(request, env) {
     nonce: randomNonceHex(),
     clientTimeMs: Date.now(),
     protocolVersion: AUTH_PROTOCOL_VERSION,
-    buildId: String(
-      env.AUTH_ACTIVE_BUILD_ID || DEFAULT_BUILD_ID
-    ),
-    clientVersion: String(
-      env.AUTH_CLIENT_VERSION || DEFAULT_CLIENT_VERSION
-    )
+    buildId: String(env.AUTH_ACTIVE_BUILD_ID || DEFAULT_BUILD_ID),
+    clientVersion: String(env.AUTH_CLIENT_VERSION || DEFAULT_CLIENT_VERSION)
   };
 
   const headers = new Headers(request.headers);
@@ -121,22 +156,6 @@ async function upgradeLegacyJsonRequest(request, env) {
     body: JSON.stringify(upgraded)
   });
 }
-
-/*
- * ==========================================================
- * LINK4M ANALYTICS V2
- * ==========================================================
- * - Counts only completed Link4m sessions that have a license key.
- * - Admin-created keys are excluded automatically because they have no
- *   matching completed link_sessions row.
- * - "Today" and "Yesterday" use fixed Vietnam time (UTC+7), independent
- *   of the browser/device timezone.
- * - No schema migration is required.
- */
-
-const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
-const MULTI_DEVICE_PREFIX = "SENTMULTI:v1:";
 
 function isAdmin(request, env) {
   const expected = String(env.ADMIN_TOKEN || "");
@@ -153,6 +172,39 @@ function vietnamDayBounds(now = Date.now()) {
     todayStart,
     tomorrowStart: todayStart + DAY_MS
   };
+}
+
+function normalizeMaxDevices(value) {
+  const maxDevices = Number(value ?? 1);
+
+  if (!Number.isInteger(maxDevices) || maxDevices < 0 || maxDevices > 100) {
+    throw new Error(
+      "Giới hạn thiết bị phải từ 0 đến 100. Dùng 0 để không giới hạn."
+    );
+  }
+
+  return maxDevices;
+}
+
+function normalizeVipPlanHours(value) {
+  const planHours = Number(value);
+  const allowed = new Set([12, 24, 72, 168, 720, 2160]);
+
+  if (!Number.isInteger(planHours) || !allowed.has(planHours)) {
+    throw new Error(
+      "Gói VIP không hợp lệ. Hỗ trợ 12h, 24h, 3 ngày, 7 ngày, 30 ngày hoặc 90 ngày."
+    );
+  }
+
+  return planHours;
+}
+
+function normalizeNote(value) {
+  return String(value || "").trim().slice(0, 160);
+}
+
+function serializeDeviceBinding(limit, hashes = []) {
+  return `${MULTI_DEVICE_PREFIX}${limit}:${[...new Set(hashes)].join(",")}`;
 }
 
 function deviceBindingInfo(value) {
@@ -187,11 +239,13 @@ function deviceBindingInfo(value) {
   };
 }
 
-function mapRecentLink4mRow(row, now) {
+function mapKeyRow(row, now = Date.now()) {
   const expiresAt = Number(row.expires_at);
+  const createdAt = Number(row.created_at);
   const binding = deviceBindingInfo(row.device_hash);
 
   let status = "active";
+
   if (row.status === "revoked") {
     status = "revoked";
   } else if (!Number.isFinite(expiresAt) || now >= expiresAt) {
@@ -205,7 +259,7 @@ function mapRecentLink4mRow(row, now) {
     maxDevices: binding.maxDevices,
     devicesUsed: binding.devicesUsed,
     createdAt: new Date(
-      Number(row.completed_at || row.created_at || now)
+      Number.isFinite(createdAt) ? createdAt : now
     ).toISOString(),
     claimedAt: row.claimed_at
       ? new Date(Number(row.claimed_at)).toISOString()
@@ -217,7 +271,157 @@ function mapRecentLink4mRow(row, now) {
     remainingSeconds: Number.isFinite(expiresAt)
       ? Math.max(0, Math.floor((expiresAt - now) / 1000))
       : 0,
-    status
+    status,
+    note: String(row.vip_note || row.note || "")
+  };
+}
+
+/* VIP schema */
+
+let vipSchemaReadyPromise = null;
+
+function ensureVipSchema(env) {
+  if (!vipSchemaReadyPromise) {
+    vipSchemaReadyPromise = (async () => {
+      if (!env.DB) {
+        throw new Error("D1 database chưa được liên kết với Worker.");
+      }
+
+      await env.DB.prepare(
+        `CREATE TABLE IF NOT EXISTS vip_keys (
+           license_key TEXT PRIMARY KEY,
+           created_at INTEGER NOT NULL,
+           note TEXT
+         )`
+      ).run();
+
+      await env.DB.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_vip_keys_created_at
+         ON vip_keys(created_at)`
+      ).run();
+
+      return true;
+    })().catch(error => {
+      vipSchemaReadyPromise = null;
+      throw error;
+    });
+  }
+
+  return vipSchemaReadyPromise;
+}
+
+async function isVipKey(env, key) {
+  await ensureVipSchema(env);
+
+  const normalized = normalizeDatabaseKey(key);
+
+  if (!normalized) {
+    return false;
+  }
+
+  const row = await env.DB.prepare(
+    `SELECT license_key
+     FROM vip_keys
+     WHERE license_key = ?
+     LIMIT 1`
+  )
+    .bind(normalized)
+    .first();
+
+  return Boolean(row);
+}
+
+async function extractSubmittedKey(request) {
+  const contentType = String(
+    request.headers.get("content-type") || ""
+  ).toLowerCase();
+
+  if (contentType.includes("application/json")) {
+    try {
+      const body = await request.clone().json();
+
+      return {
+        key: normalizeDatabaseKey(firstString(body, [
+          "key", "licenseKey", "license_key", "userKey", "user_key", "code"
+        ])),
+        kind: "json"
+      };
+    } catch {
+      return { key: "", kind: "json" };
+    }
+  }
+
+  try {
+    const raw = await request.clone().text();
+    const form = new URLSearchParams(raw);
+
+    const isLibloader =
+      form.has("user_key") ||
+      form.has("serial") ||
+      form.has("package");
+
+    return {
+      key: normalizeDatabaseKey(
+        form.get("user_key") ||
+        form.get("key") ||
+        form.get("license_key") ||
+        form.get("code") ||
+        ""
+      ),
+      kind: isLibloader ? "libloader" : "legacy"
+    };
+  } catch {
+    return { key: "", kind: "legacy" };
+  }
+}
+
+function accessDeniedResponse(info, code, message, status = 403) {
+  if (info?.kind === "libloader") {
+    return json({
+      status: false,
+      reason: message,
+      code
+    }, status);
+  }
+
+  return json({
+    ok: false,
+    valid: false,
+    error: code,
+    reason: message
+  }, status);
+}
+
+async function rewriteRequestPath(request, newPath) {
+  const url = new URL(request.url);
+  url.pathname = newPath;
+
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+
+  const init = {
+    method: request.method,
+    headers,
+    redirect: request.redirect
+  };
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = await request.clone().arrayBuffer();
+  }
+
+  return new Request(url.toString(), init);
+}
+
+/* FREE / Link4m analytics V2 */
+
+function mapRecentLink4mRow(row, now) {
+  const mapped = mapKeyRow(row, now);
+
+  return {
+    ...mapped,
+    createdAt: new Date(
+      Number(row.completed_at || row.created_at || now)
+    ).toISOString()
   };
 }
 
@@ -243,14 +447,6 @@ async function handleAccurateLink4mStats(request, env) {
     tomorrowStart
   } = vietnamDayBounds(now);
 
-  /*
-   * COUNT(*) = number of successful completed Link4m sessions.
-   * COUNT(DISTINCT license_key) = number of distinct keys produced by Link4m.
-   *
-   * We intentionally do not call this "unique people" because the current
-   * database does not store a stable user identity. Calling sessions "people"
-   * would make the dashboard inaccurate.
-   */
   const summary = await env.DB.prepare(
     `SELECT
        COUNT(*) AS completed_sessions,
@@ -319,13 +515,13 @@ async function handleAccurateLink4mStats(request, env) {
   const yesterday = Number(summary?.yesterday || 0);
   const difference = today - yesterday;
 
-  let percentChange = null;
+  let percentChange = 0;
+
   if (yesterday > 0) {
-    percentChange = Math.round((difference / yesterday) * 10000) / 100;
+    percentChange =
+      Math.round((difference / yesterday) * 10000) / 100;
   } else if (today > 0) {
     percentChange = 100;
-  } else {
-    percentChange = 0;
   }
 
   return json({
@@ -354,28 +550,457 @@ async function handleAccurateLink4mStats(request, env) {
   });
 }
 
+/* VIP admin APIs */
+
+async function insertUniqueVipKey(env, planHours, maxDevices, note) {
+  await ensureVipSchema(env);
+
+  const now = Date.now();
+  const expiresAt =
+    now + planHours * 60 * 60 * 1000;
+
+  const initialBinding =
+    maxDevices === 1
+      ? null
+      : serializeDeviceBinding(maxDevices, []);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const licenseKey = createVipKey();
+
+    try {
+      await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO keys (
+             license_key,
+             plan_hours,
+             device_hash,
+             created_at,
+             expires_at,
+             status
+           )
+           VALUES (?, ?, ?, ?, ?, 'active')`
+        ).bind(
+          licenseKey,
+          planHours,
+          initialBinding,
+          now,
+          expiresAt
+        ),
+
+        env.DB.prepare(
+          `INSERT INTO vip_keys (
+             license_key,
+             created_at,
+             note
+           )
+           VALUES (?, ?, ?)`
+        ).bind(
+          licenseKey,
+          now,
+          note
+        )
+      ]);
+
+      return {
+        license_key: licenseKey,
+        plan_hours: planHours,
+        device_hash: initialBinding,
+        created_at: now,
+        claimed_at: null,
+        expires_at: expiresAt,
+        status: "active",
+        vip_note: note
+      };
+    } catch (error) {
+      const message = String(error).toLowerCase();
+
+      if (
+        message.includes("unique") ||
+        message.includes("constraint")
+      ) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error(
+    "Không thể tạo key VIP mới. Hãy thử lại."
+  );
+}
+
+async function handleAdminVipCreate(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({
+      ok: false,
+      error: "Không có quyền tạo key VIP."
+    }, 401);
+  }
+
+  const body = await request.json().catch(() => ({}));
+
+  const planHours = normalizeVipPlanHours(body.planHours);
+  const maxDevices = normalizeMaxDevices(body.maxDevices);
+  const note = normalizeNote(body.note);
+
+  const row = await insertUniqueVipKey(
+    env,
+    planHours,
+    maxDevices,
+    note
+  );
+
+  return json({
+    ok: true,
+    vip: true,
+    data: mapKeyRow(row, Date.now())
+  }, 201);
+}
+
+async function handleAdminVipStats(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({
+      ok: false,
+      error: "Không có quyền xem key VIP."
+    }, 401);
+  }
+
+  await ensureVipSchema(env);
+
+  const now = Date.now();
+
+  const summary = await env.DB.prepare(
+    `SELECT
+       COUNT(*) AS total,
+       COUNT(CASE
+         WHEN k.status = 'active'
+          AND k.expires_at > ?
+         THEN 1
+       END) AS active,
+       COUNT(CASE
+         WHEN k.status != 'revoked'
+          AND k.expires_at <= ?
+         THEN 1
+       END) AS expired,
+       COUNT(CASE
+         WHEN k.status = 'revoked'
+         THEN 1
+       END) AS revoked
+     FROM vip_keys AS v
+     INNER JOIN keys AS k
+       ON k.license_key = v.license_key`
+  )
+    .bind(now, now)
+    .first();
+
+  const recentResult = await env.DB.prepare(
+    `SELECT
+       k.license_key,
+       k.plan_hours,
+       k.device_hash,
+       k.claimed_at,
+       k.created_at,
+       k.expires_at,
+       k.status,
+       v.note AS vip_note
+     FROM vip_keys AS v
+     INNER JOIN keys AS k
+       ON k.license_key = v.license_key
+     ORDER BY v.created_at DESC
+     LIMIT 50`
+  ).all();
+
+  return json({
+    ok: true,
+    generatedAt: new Date(now).toISOString(),
+    stats: {
+      total: Number(summary?.total || 0),
+      active: Number(summary?.active || 0),
+      expired: Number(summary?.expired || 0),
+      revoked: Number(summary?.revoked || 0)
+    },
+    recent: (recentResult.results || [])
+      .map(row => mapKeyRow(row, now))
+  });
+}
+
+async function handleAdminMarkVip(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({
+      ok: false,
+      error: "Không có quyền."
+    }, 401);
+  }
+
+  await ensureVipSchema(env);
+
+  const body = await request.json().catch(() => ({}));
+  const key = normalizeDatabaseKey(body.key);
+
+  const existing = await env.DB.prepare(
+    `SELECT license_key
+     FROM keys
+     WHERE license_key = ?
+     LIMIT 1`
+  )
+    .bind(key)
+    .first();
+
+  if (!existing) {
+    return json({
+      ok: false,
+      error: "Không tìm thấy key."
+    }, 404);
+  }
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO vip_keys (
+       license_key,
+       created_at,
+       note
+     )
+     VALUES (?, ?, ?)`
+  )
+    .bind(
+      key,
+      Date.now(),
+      normalizeNote(body.note)
+    )
+    .run();
+
+  return json({
+    ok: true,
+    key,
+    vip: true
+  });
+}
+
+/* FREE/VIP product gate */
+
+function requestWantsVip(request) {
+  return String(
+    request.headers.get(VIP_PRODUCT_HEADER) || ""
+  )
+    .trim()
+    .toLowerCase() === VIP_PRODUCT_VALUE;
+}
+
+async function enforceProductGate(request, env, requireVip) {
+  const info = await extractSubmittedKey(request);
+
+  if (!info.key) {
+    return {
+      allowed: true,
+      info,
+      isVip: false
+    };
+  }
+
+  const vip = await isVipKey(env, info.key);
+
+  if (requireVip && !vip) {
+    return {
+      allowed: false,
+      info,
+      isVip: false,
+      response: accessDeniedResponse(
+        info,
+        "FREE_KEY_NOT_ALLOWED_IN_VIP_APP",
+        "Key Free/Link4m không được phép đăng nhập app VIP.",
+        403
+      )
+    };
+  }
+
+  if (!requireVip && vip) {
+    return {
+      allowed: false,
+      info,
+      isVip: true,
+      response: accessDeniedResponse(
+        info,
+        "VIP_KEY_REQUIRES_VIP_APP",
+        "Đây là key VIP. Key này chỉ được phép đăng nhập app VIP.",
+        403
+      )
+    };
+  }
+
+  return {
+    allowed: true,
+    info,
+    isVip: vip
+  };
+}
+
+async function forwardVipAlias(request, env, ctx, targetPath) {
+  const gate = await enforceProductGate(
+    request,
+    env,
+    true
+  );
+
+  if (!gate.allowed) {
+    return gate.response;
+  }
+
+  let forwarded = await rewriteRequestPath(
+    request,
+    targetPath
+  );
+
+  if (
+    targetPath === "/api/claim" ||
+    targetPath === "/api/verify"
+  ) {
+    forwarded = await upgradeLegacyJsonRequest(
+      forwarded,
+      env
+    );
+  }
+
+  return signedWorker.fetch(
+    forwarded,
+    env,
+    ctx
+  );
+}
+
 export default {
   async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const path = url.pathname.replace(/\/+$/, "") || "/";
+    try {
+      const url = new URL(request.url);
+      const path =
+        url.pathname.replace(/\/+$/, "") || "/";
 
-    // Analytics V2 intercept: no change to index.js is required.
-    if (
-      request.method === "POST" &&
-      path === "/api/admin/link4m-stats"
-    ) {
-      return handleAccurateLink4mStats(request, env);
+      if (
+        request.method === "POST" &&
+        path === "/api/admin/link4m-stats"
+      ) {
+        return handleAccurateLink4mStats(request, env);
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/api/admin/vip/stats"
+      ) {
+        return handleAdminVipStats(request, env);
+      }
+
+      // Backward-compatible: old admin create route now creates VIP.
+      if (
+        request.method === "POST" &&
+        (
+          path === "/api/admin/create-key" ||
+          path === "/api/admin/vip/create"
+        )
+      ) {
+        return handleAdminVipCreate(request, env);
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/api/admin/vip/mark"
+      ) {
+        return handleAdminMarkVip(request, env);
+      }
+
+      // VIP aliases. They rewrite internally so index.js still signs
+      // the canonical /api/claim or /api/verify endpoint.
+      if (
+        request.method === "POST" &&
+        path === "/api/vip/claim"
+      ) {
+        return forwardVipAlias(
+          request,
+          env,
+          ctx,
+          "/api/claim"
+        );
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/api/vip/verify"
+      ) {
+        return forwardVipAlias(
+          request,
+          env,
+          ctx,
+          "/api/verify"
+        );
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/api/vip/a"
+      ) {
+        return forwardVipAlias(
+          request,
+          env,
+          ctx,
+          "/a"
+        );
+      }
+
+      // Existing auth routes:
+      // header X-Sent-Product: vip => VIP-only mode.
+      // no header                  => FREE-only mode.
+      if (
+        request.method === "POST" &&
+        (
+          path === "/api/claim" ||
+          path === "/api/verify" ||
+          path === "/a"
+        )
+      ) {
+        const requireVip = requestWantsVip(request);
+
+        const gate = await enforceProductGate(
+          request,
+          env,
+          requireVip
+        );
+
+        if (!gate.allowed) {
+          return gate.response;
+        }
+
+        let forwarded = request;
+
+        if (
+          path === "/api/claim" ||
+          path === "/api/verify"
+        ) {
+          forwarded = await upgradeLegacyJsonRequest(
+            request,
+            env
+          );
+        }
+
+        return signedWorker.fetch(
+          forwarded,
+          env,
+          ctx
+        );
+      }
+
+      // Public Get Key, Link4m, assets, revoke and all other existing
+      // behavior go untouched to index.js.
+      return signedWorker.fetch(
+        request,
+        env,
+        ctx
+      );
+    } catch (error) {
+      return json({
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Lỗi máy chủ."
+      }, 400);
     }
-
-    let forwarded = request;
-
-    if (
-      request.method === "POST" &&
-      (path === "/api/claim" || path === "/api/verify")
-    ) {
-      forwarded = await upgradeLegacyJsonRequest(request, env);
-    }
-
-    return signedWorker.fetch(forwarded, env, ctx);
   }
 };
