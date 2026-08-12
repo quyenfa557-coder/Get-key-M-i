@@ -2070,6 +2070,96 @@ async function claimNativeDevice(env, key, row, deviceId, hash, now) {
   };
 }
 
+const LIBLOADER_LEGACY_SECRET =
+  "VWnSvunmScLMb9KAo68bSrKYIKOo5Jqm";
+const LIBLOADER_LEGACY_GAME = "FF";
+const LIBLOADER_LEGACY_PACKAGE = "com.dts.freefiremax";
+
+function libloaderLegacyFailure(reason) {
+  return json({
+    status: false,
+    reason: String(reason || "Không thể xác thực key.")
+  });
+}
+
+async function handleLegacyLibloaderClaim(form, env) {
+  const submittedGame = String(form.get("game") || "");
+  const submittedKey = String(form.get("user_key") || "");
+  const submittedSerial = String(form.get("serial") || "");
+  const submittedPackage = String(form.get("package") || "");
+
+  if (!submittedKey.trim() || !submittedSerial.trim()) {
+    return libloaderLegacyFailure("Thiếu key hoặc mã thiết bị.");
+  }
+
+  if (
+    submittedGame !== LIBLOADER_LEGACY_GAME ||
+    submittedPackage !== LIBLOADER_LEGACY_PACKAGE
+  ) {
+    return libloaderLegacyFailure("Ứng dụng gửi yêu cầu không hợp lệ.");
+  }
+
+  let key;
+  let deviceId;
+
+  try {
+    // Normalize only for the database and device hash. The MD5 response must
+    // use the exact form values because libloader calculates the same value.
+    key = normalizeKey(submittedKey);
+    deviceId = normalizeDeviceId(submittedSerial);
+  } catch (error) {
+    return libloaderLegacyFailure(
+      error instanceof Error ? error.message : "Key không hợp lệ."
+    );
+  }
+
+  const hash = await deviceHash(env, deviceId);
+  const now = Date.now();
+  const row = await env.DB.prepare(
+    `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
+  )
+    .bind(key)
+    .first();
+
+  if (!row) {
+    return libloaderLegacyFailure("Không tìm thấy key.");
+  }
+
+  if (row.status === "revoked") {
+    return libloaderLegacyFailure("Key đã bị thu hồi.");
+  }
+
+  if (now >= Number(row.expires_at)) {
+    return libloaderLegacyFailure("Key đã hết hạn.");
+  }
+
+  const claimResult = await claimDeviceForKey(
+    env,
+    key,
+    row,
+    hash,
+    now
+  );
+
+  if (!claimResult.ok) {
+    return libloaderLegacyFailure(claimResult.error);
+  }
+
+  const token = md5Hex(
+    `${submittedGame}-${submittedKey}-${submittedSerial}-${submittedPackage}-${LIBLOADER_LEGACY_SECRET}`
+  );
+
+  return json({
+    status: true,
+    data: {
+      token,
+      rng: Math.floor(Date.now() / 1000),
+      EXP: new Date(Number(row.expires_at)).toISOString(),
+      modname: "Sent Tweaks"
+    }
+  });
+}
+
 async function handleNativeClaim(request, env) {
   const contentType = String(
     request.headers.get("content-type") || ""
@@ -2081,6 +2171,12 @@ async function handleNativeClaim(request, env) {
 
   const rawBody = await request.text();
   const form = new URLSearchParams(rawBody);
+
+  // Compatibility for legacy libloader.so: its wire protocol uses
+  // game, user_key, serial and package, and expects an MD5 token response.
+  if (form.has("user_key") || form.has("serial")) {
+    return handleLegacyLibloaderClaim(form, env);
+  }
 
   const submittedKey = String(form.get("key") || "").trim();
   const submittedDeviceId = String(form.get("deviceid") || "").trim();
