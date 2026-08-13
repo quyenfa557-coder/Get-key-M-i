@@ -45,15 +45,15 @@ function normalizeDeviceId(value) {
 }
 
 function normalizePlan(value) {
-  const plan = Number(value);
+  const plan = Number(value || 24);
 
-  if (plan !== 12 && plan !== 24) {
+  if (plan !== 24) {
     throw new Error(
-      "Gói key chỉ hỗ trợ 12 hoặc 24 giờ."
+      "Hệ thống chỉ hỗ trợ key 24 giờ."
     );
   }
 
-  return plan;
+  return 24;
 }
 
 
@@ -1004,21 +1004,30 @@ async function handleAdminLink4mStats(
   });
 }
 
-async function createLink4mShortUrl(env, destinationUrl) {
-  const apiToken = String(env.LINK4M_API_TOKEN || "").trim();
+async function link4mShortenUrl(apiToken, destinationUrl) {
+  const link4mApi = new URL(
+    "https://link4m.co/api-shorten/v2"
+  );
 
-  if (!apiToken) {
-    throw new Error("Máy chủ chưa cấu hình LINK4M_API_TOKEN.");
-  }
+  link4mApi.searchParams.set(
+    "api",
+    apiToken
+  );
 
-  const link4mApi = new URL("https://link4m.co/api-shorten/v2");
-  link4mApi.searchParams.set("api", apiToken);
-  link4mApi.searchParams.set("url", destinationUrl);
+  link4mApi.searchParams.set(
+    "url",
+    destinationUrl
+  );
 
-  const response = await fetch(link4mApi.toString(), {
-    method: "GET",
-    headers: { accept: "application/json" }
-  });
+  const response = await fetch(
+    link4mApi.toString(),
+    {
+      method: "GET",
+      headers: {
+        accept: "application/json"
+      }
+    }
+  );
 
   const raw = await response.text();
   let result;
@@ -1026,14 +1035,20 @@ async function createLink4mShortUrl(env, destinationUrl) {
   try {
     result = JSON.parse(raw);
   } catch {
-    throw new Error("Link4m trả về dữ liệu không hợp lệ.");
+    throw new Error(
+      "Link4m trả về dữ liệu không hợp lệ."
+    );
   }
 
   if (
     !response.ok ||
-    String(result.status || "").toLowerCase() !== "success"
+    String(result.status || "")
+      .toLowerCase() !== "success"
   ) {
-    throw new Error(result.message || "Link4m không thể tạo liên kết.");
+    throw new Error(
+      result.message ||
+      "Link4m không thể tạo liên kết."
+    );
   }
 
   const shortUrl =
@@ -1041,41 +1056,80 @@ async function createLink4mShortUrl(env, destinationUrl) {
     result.shortened_url ||
     result.shortUrl;
 
-  if (!shortUrl || !/^https?:\/\//i.test(shortUrl)) {
-    throw new Error("Link4m không trả về đường dẫn rút gọn.");
+  if (
+    !shortUrl ||
+    !/^https?:\/\//i.test(shortUrl)
+  ) {
+    throw new Error(
+      "Link4m không trả về đường dẫn rút gọn."
+    );
   }
 
   return shortUrl;
+}
+
+async function link4mStep2Proof(
+  sessionToken,
+  apiToken
+) {
+  // Proof is never returned by /api/link4m/start. It is created only after
+  // the first Link4m callback reaches the Worker, so /api/link4m/complete
+  // cannot be called successfully after only one shortened link.
+  return sha256(
+    `sent-link4m-v2:${sessionToken}:${apiToken}`
+  );
+}
+
+function normalizeLink4mProof(value) {
+  const proof = String(value || "").trim().toLowerCase();
+
+  if (!/^[a-f0-9]{64}$/.test(proof)) {
+    throw new Error(
+      "Xác nhận bước Link4m thứ hai không hợp lệ."
+    );
+  }
+
+  return proof;
 }
 
 async function handleLink4mStart(
   request,
   env
 ) {
-  const apiToken = String(env.LINK4M_API_TOKEN || "").trim();
+  const apiToken =
+    String(
+      env.LINK4M_API_TOKEN || ""
+    ).trim();
 
   if (!apiToken) {
     return json(
       {
         ok: false,
-        error: "Máy chủ chưa cấu hình LINK4M_API_TOKEN."
+        error:
+          "Máy chủ chưa cấu hình LINK4M_API_TOKEN."
       },
       503
     );
   }
 
   const now = Date.now();
-  const expiresAt = now + 20 * 60 * 1000;
 
-  // Step 1 token. Only an s2_ token is accepted by /api/link4m/complete.
-  const sessionToken = `s1_${randomToken(30)}`;
-  const sessionHash = await sha256(sessionToken);
+  const expiresAt =
+    now + 20 * 60 * 1000;
+
+  const sessionToken =
+    randomToken(32);
+
+  const sessionHash =
+    await sha256(sessionToken);
 
   await env.DB.prepare(
     `DELETE FROM link_sessions
      WHERE expires_at < ?`
   )
-    .bind(now - 24 * 60 * 60 * 1000)
+    .bind(
+      now - 24 * 60 * 60 * 1000
+    )
     .run();
 
   await env.DB.prepare(
@@ -1086,22 +1140,97 @@ async function handleLink4mStart(
     )
     VALUES (?, ?, ?)`
   )
-    .bind(sessionHash, now, expiresAt)
+    .bind(
+      sessionHash,
+      now,
+      expiresAt
+    )
     .run();
 
-  const callbackUrl = new URL("/senttwgetkey", request.url);
-  callbackUrl.searchParams.set("session", sessionToken);
-
-  try {
-    const shortUrl = await createLink4mShortUrl(
-      env,
-      callbackUrl.toString()
+  const callbackUrl =
+    new URL(
+      "/senttwgetkey",
+      request.url
     );
 
-    return json({
+  callbackUrl.searchParams.set(
+    "session",
+    sessionToken
+  );
+
+  callbackUrl.searchParams.set(
+    "step",
+    "1"
+  );
+
+
+
+  const link4mApi =
+    new URL(
+      "https://link4m.co/api-shorten/v2"
+    );
+
+  link4mApi.searchParams.set(
+    "api",
+    apiToken
+  );
+
+  link4mApi.searchParams.set(
+    "url",
+    callbackUrl.toString()
+  );
+
+  try {
+    const response =
+      await fetch(
+        link4mApi.toString(),
+        {
+          method: "GET",
+          headers: {
+            accept: "application/json"
+          }
+        }
+      );
+
+    const raw =
+      await response.text();
+
+    let result;
+
+    try {
+      result = JSON.parse(raw);
+    } catch {
+      throw new Error(
+        "Link4m trả về dữ liệu không hợp lệ."
+      );
+    }
+
+    if (
+      !response.ok ||
+      String(result.status || "")
+        .toLowerCase() !== "success"
+    ) {
+      throw new Error(
+        result.message ||
+        "Link4m không thể tạo liên kết."
+      );
+    }
+
+    const shortUrl =
+      result.shortenedUrl ||
+      result.shortened_url ||
+      result.shortUrl;
+
+    if (
+      !shortUrl ||
+      !/^https?:\/\//i.test(shortUrl)
+    ) {
+      throw new Error(
+        "Link4m không trả về đường dẫn rút gọn."
+      );
+    }
+return json({
       ok: true,
-      step: 1,
-      totalSteps: 2,
       shortUrl
     });
   } catch (error) {
@@ -1116,25 +1245,31 @@ async function handleLink4mStart(
   }
 }
 
-async function handleLink4mLanding(request, env) {
+async function handleLink4mLanding(
+  request,
+  env
+) {
   const url = new URL(request.url);
-  const session = String(url.searchParams.get("session") || "").trim();
+  const path = url.pathname;
 
-  if (!session) {
-    return redirect(`${url.origin}/?link4m_error=missing_session`);
-  }
+  let sessionToken;
 
-  let normalized;
   try {
-    normalized = normalizeSessionToken(session);
+    sessionToken = normalizeSessionToken(
+      url.searchParams.get("session")
+    );
   } catch {
-    return redirect(`${url.origin}/?link4m_error=invalid_session`);
+    return redirect(
+      `${url.origin}/?link4m_error=missing_session`
+    );
   }
 
-  const sessionHash = await sha256(normalized);
-  const now = Date.now();
+  const sessionHash = await sha256(
+    sessionToken
+  );
 
-  const row = await env.DB.prepare(
+  const now = Date.now();
+  const session = await env.DB.prepare(
     `SELECT *
      FROM link_sessions
      WHERE session_hash = ?`
@@ -1142,69 +1277,111 @@ async function handleLink4mLanding(request, env) {
     .bind(sessionHash)
     .first();
 
-  if (!row) {
-    return redirect(`${url.origin}/?link4m_error=session_not_found`);
+  if (!session) {
+    return redirect(
+      `${url.origin}/?link4m_error=session_not_found`
+    );
   }
 
-  if (now >= Number(row.expires_at)) {
-    return redirect(`${url.origin}/?link4m_error=session_expired`);
+  if (now >= Number(session.expires_at)) {
+    return redirect(
+      `${url.origin}/?link4m_error=session_expired`
+    );
   }
 
-  // First Link4m completed: rotate the DB token to s2_ and send the user
-  // through a second, newly generated Link4m URL.
-  if (normalized.startsWith("s1_")) {
-    const step2Token = `s2_${randomToken(30)}`;
-    const step2Hash = await sha256(step2Token);
+  const apiToken = String(
+    env.LINK4M_API_TOKEN || ""
+  ).trim();
 
-    const rotateResult = await env.DB.prepare(
-      `UPDATE link_sessions
-       SET session_hash = ?
-       WHERE session_hash = ?
-         AND completed_at IS NULL
-         AND expires_at > ?`
-    )
-      .bind(step2Hash, sessionHash, now)
-      .run();
+  if (!apiToken) {
+    return redirect(
+      `${url.origin}/?link4m_error=link4m_not_configured`
+    );
+  }
 
-    if (!rotateResult.meta.changes) {
-      return redirect(`${url.origin}/?link4m_error=step1_already_used`);
-    }
-
-    const callbackUrl = new URL("/senttwgetkey", url.origin);
-    callbackUrl.searchParams.set("session", step2Token);
-
+  // STEP 1 completed -> create and send the user through Link4m a second time.
+  if (path === "/senttwgetkey") {
     try {
-      const secondShortUrl = await createLink4mShortUrl(
-        env,
-        callbackUrl.toString()
+      const proof = await link4mStep2Proof(
+        sessionToken,
+        apiToken
       );
 
-      return redirect(secondShortUrl);
-    } catch (error) {
-      // Restore the step-1 token so the user can retry if Link4m itself fails.
-      await env.DB.prepare(
-        `UPDATE link_sessions
-         SET session_hash = ?
-         WHERE session_hash = ?
-           AND completed_at IS NULL`
-      )
-        .bind(sessionHash, step2Hash)
-        .run();
+      const callback2 = new URL(
+        "/senttwnhankey",
+        url.origin
+      );
 
-      throw error;
+      callback2.searchParams.set(
+        "session",
+        sessionToken
+      );
+
+      callback2.searchParams.set(
+        "proof",
+        proof
+      );
+
+      const shortUrl2 = await link4mShortenUrl(
+        apiToken,
+        callback2.toString()
+      );
+
+      return redirect(shortUrl2);
+    } catch {
+      return redirect(
+        `${url.origin}/?link4m_error=step2_create_failed`
+      );
     }
   }
 
-  // Only the callback created after step 1 can reach this path.
-  if (!normalized.startsWith("s2_")) {
-    return redirect(`${url.origin}/?link4m_error=invalid_step`);
+  // STEP 2 completed -> verify server-generated proof, then allow the public
+  // page to call /api/link4m/complete. app.js remains unchanged: it forwards
+  // the whole composite value as sessionToken.
+  if (path === "/senttwnhankey") {
+    let proof;
+
+    try {
+      proof = normalizeLink4mProof(
+        url.searchParams.get("proof")
+      );
+    } catch {
+      return redirect(
+        `${url.origin}/?link4m_error=step2_proof_missing`
+      );
+    }
+
+    const expectedProof = await link4mStep2Proof(
+      sessionToken,
+      apiToken
+    );
+
+    if (proof !== expectedProof) {
+      return redirect(
+        `${url.origin}/?link4m_error=step2_proof_invalid`
+      );
+    }
+
+    const destination = new URL(
+      "/",
+      url.origin
+    );
+
+    // Dot is intentionally used only in this composite browser value.
+    // The raw session token itself still passes normalizeSessionToken().
+    destination.searchParams.set(
+      "session",
+      `${sessionToken}.${proof}`
+    );
+
+    return redirect(
+      destination.toString()
+    );
   }
 
-  const destination = new URL("/", url.origin);
-  destination.searchParams.set("session", normalized);
-  destination.searchParams.set("link4m_step", "2");
-
-  return redirect(destination.toString());
+  return redirect(
+    `${url.origin}/?link4m_error=invalid_step`
+  );
 }
 
 async function handleLink4mComplete(
@@ -1214,16 +1391,66 @@ async function handleLink4mComplete(
   const body =
     await readJson(request);
 
-  const sessionToken =
-    normalizeSessionToken(
-      body.sessionToken
-    );
+  const compositeToken = String(
+    body.sessionToken || ""
+  ).trim();
 
-  if (!sessionToken.startsWith("s2_")) {
+  const separatorIndex =
+    compositeToken.lastIndexOf(".");
+
+  if (separatorIndex <= 0) {
     return json(
       {
         ok: false,
-        error: "Bạn phải hoàn thành đủ 2 bước Link4m trước khi nhận key."
+        error:
+          "Bạn phải hoàn thành đủ 2 bước Link4m."
+      },
+      403
+    );
+  }
+
+  const sessionToken =
+    normalizeSessionToken(
+      compositeToken.slice(
+        0,
+        separatorIndex
+      )
+    );
+
+  const proof =
+    normalizeLink4mProof(
+      compositeToken.slice(
+        separatorIndex + 1
+      )
+    );
+
+  const apiToken = String(
+    env.LINK4M_API_TOKEN || ""
+  ).trim();
+
+  if (!apiToken) {
+    return json(
+      {
+        ok: false,
+        error:
+          "Máy chủ chưa cấu hình LINK4M_API_TOKEN."
+      },
+      503
+    );
+  }
+
+  const expectedProof =
+    await link4mStep2Proof(
+      sessionToken,
+      apiToken
+    );
+
+  if (proof !== expectedProof) {
+    return json(
+      {
+        ok: false,
+        error:
+          "Bước Link4m thứ hai chưa được xác nhận."
       },
       403
     );
@@ -1616,106 +1843,13 @@ function authBuildLegacySuccess() {
 
 /*
  * =====================================================
- * LEGACY NATIVE CLIENT COMPATIBILITY
+ * SENT TWEAKS NATIVE AUTH
  * =====================================================
- * The old native client POSTs application/x-www-form-urlencoded:
+ * Native lib POSTs application/x-www-form-urlencoded:
  *   key=...&deviceid=...&tokenanti=...
- * and expects JSON containing "token".
- *
- * This adapter DOES NOT bypass license checks. It uses the same D1 key,
- * expiration, status, and device-binding policy as the current Worker.
+ * /api/claim is the only native authentication endpoint.
  */
-const LIBLOADER_LEGACY_SECRET =
-  "VWnSvunmScLMb9KAo68bSrKYIKOo5Jqm";
-const LIBLOADER_LEGACY_GAME = "FF";
-const LIBLOADER_LEGACY_PACKAGE = "com.dts.freefiremax";
-
-function libloaderLegacyFailure(reason) {
-  return json({
-    status: false,
-    reason: String(reason || "Không thể xác thực key.")
-  });
-}
-
-async function handleLegacyLibloaderClaim(form, env) {
-  const submittedGame = String(form.get("game") || "");
-  const submittedKey = String(form.get("user_key") || "");
-  const submittedSerial = String(form.get("serial") || "");
-  const submittedPackage = String(form.get("package") || "");
-
-  if (!submittedKey.trim() || !submittedSerial.trim()) {
-    return libloaderLegacyFailure("Thiếu key hoặc mã thiết bị.");
-  }
-
-  if (
-    submittedGame !== LIBLOADER_LEGACY_GAME ||
-    submittedPackage !== LIBLOADER_LEGACY_PACKAGE
-  ) {
-    return libloaderLegacyFailure("Ứng dụng gửi yêu cầu không hợp lệ.");
-  }
-
-  let key;
-  let deviceId;
-
-  try {
-    // Normalize only for the database and device hash. The MD5 response must
-    // use the exact form values because libloader calculates the same value.
-    key = normalizeKey(submittedKey);
-    deviceId = normalizeDeviceId(submittedSerial);
-  } catch (error) {
-    return libloaderLegacyFailure(
-      error instanceof Error ? error.message : "Key không hợp lệ."
-    );
-  }
-
-  const hash = await deviceHash(env, deviceId);
-  const now = Date.now();
-  const row = await env.DB.prepare(
-    `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
-  )
-    .bind(key)
-    .first();
-
-  if (!row) {
-    return libloaderLegacyFailure("Không tìm thấy key.");
-  }
-
-  if (row.status === "revoked") {
-    return libloaderLegacyFailure("Key đã bị thu hồi.");
-  }
-
-  if (now >= Number(row.expires_at)) {
-    return libloaderLegacyFailure("Key đã hết hạn.");
-  }
-
-  const claimResult = await claimDeviceForKey(
-    env,
-    key,
-    row,
-    hash,
-    now
-  );
-
-  if (!claimResult.ok) {
-    return libloaderLegacyFailure(claimResult.error);
-  }
-
-  const token = md5Hex(
-    `${submittedGame}-${submittedKey}-${submittedSerial}-${submittedPackage}-${LIBLOADER_LEGACY_SECRET}`
-  );
-
-  return json({
-    status: true,
-    data: {
-      token,
-      rng: Math.floor(Date.now() / 1000),
-      EXP: new Date(Number(row.expires_at)).toISOString(),
-      modname: "Sent Tweaks"
-    }
-  });
-}
-
-const LIBMAIN_LEGACY_CODES = Object.freeze({
+const NATIVE_TOKEN_CODES = Object.freeze({
   "A": 876543,
   "B": 124367,
   "C": 456789,
@@ -1811,11 +1945,11 @@ const LIBMAIN_LEGACY_CODES = Object.freeze({
   " ": 999999
 });
 
-function libmainLegacyEncode(value) {
+function nativeTokenEncode(value) {
   const parts = [];
 
   for (const character of String(value || "")) {
-    const code = LIBMAIN_LEGACY_CODES[character];
+    const code = NATIVE_TOKEN_CODES[character];
     if (!Number.isInteger(code)) {
       throw new Error("Legacy libmain token chứa ký tự không được hỗ trợ.");
     }
@@ -1825,36 +1959,208 @@ function libmainLegacyEncode(value) {
   return parts.join("-");
 }
 
-const LIBMAIN_LEGACY_HEADERS = Object.freeze({
-  "content-type": "text/plain; charset=utf-8",
-  "cache-control": "no-store",
-  "x-content-type-options": "nosniff"
-});
-
-/*
- * libmain.so does not parse the HTTP body as plain JSON. It first decodes
- * the complete body with the numeric legacy alphabet above, then expects:
- *   {"bool":"true|false","mes":"..."}
- * On success the native UI specifically checks for mes === "suc".
- * Always return HTTP 200 here so the old curl client can read and decode
- * authentication failures instead of falling into its malformed-JSON path.
- */
-function libmainLegacyResponse(valid, message) {
-  const payload = JSON.stringify({
-    bool: valid ? "true" : "false",
-    mes: String(message || (valid ? "suc" : "Login failed."))
-  });
-
-  return new Response(
-    libmainLegacyEncode(payload),
-    {
-      status: 200,
-      headers: LIBMAIN_LEGACY_HEADERS
-    }
+async function legacyKeysSchema(env) {
+  const result = await env.DB.prepare("PRAGMA table_info(keys)").all();
+  const names = new Set(
+    (result.results || []).map(row => String(row.name || ""))
   );
+
+  return {
+    deviceHash: names.has("device_hash"),
+    claimedAt: names.has("claimed_at"),
+    deviceBound: names.has("device_bound"),
+    used: names.has("used"),
+    maxUses: names.has("max_uses"),
+    lastUsedAt: names.has("last_used_at")
+  };
 }
 
-async function handleLegacyLibmainClaim(request, env) {
+async function claimNativeDevice(env, key, row, deviceId, hash, now) {
+  const schema = await legacyKeysSchema(env);
+
+  // Newer Sent Tweaks schema: reuse the existing hashed multi-device binder.
+  if (schema.deviceHash) {
+    return claimDeviceForKey(env, key, row, hash, now);
+  }
+
+  // Older schema used by the first D1 deployment.
+  if (schema.deviceBound) {
+    const currentDevice = String(row.device_bound || "").trim();
+
+    if (currentDevice) {
+      if (currentDevice !== deviceId) {
+        return {
+          ok: false,
+          error: "Key đã được liên kết với thiết bị khác."
+        };
+      }
+
+      if (schema.lastUsedAt) {
+        await env.DB.prepare(
+          `UPDATE keys SET last_used_at = ? WHERE license_key = ?`
+        ).bind(now, key).run();
+      }
+
+      return { ok: true, row };
+    }
+
+    const used = schema.used ? Number(row.used || 0) : 0;
+    const maxUses = schema.maxUses ? Number(row.max_uses || 1) : 1;
+
+    if (maxUses > 0 && used >= maxUses) {
+      return {
+        ok: false,
+        error: "Key đã đạt giới hạn thiết bị."
+      };
+    }
+
+    const sets = ["device_bound = ?"];
+    const binds = [deviceId];
+
+    if (schema.used) {
+      sets.push("used = used + 1");
+    }
+
+    if (schema.lastUsedAt) {
+      sets.push("last_used_at = ?");
+      binds.push(now);
+    }
+
+    binds.push(key);
+
+    const update = await env.DB.prepare(
+      `UPDATE keys
+       SET ${sets.join(", ")}
+       WHERE license_key = ?
+         AND status = 'active'
+         AND expires_at > ?
+         AND (device_bound IS NULL OR device_bound = '')`
+    ).bind(...binds, now).run();
+
+    if (!update.meta.changes) {
+      const fresh = await env.DB.prepare(
+        `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
+      ).bind(key).first();
+
+      if (!fresh) {
+        return { ok: false, error: "Không tìm thấy key." };
+      }
+
+      if (String(fresh.device_bound || "").trim() === deviceId) {
+        return { ok: true, row: fresh };
+      }
+
+      return {
+        ok: false,
+        error: "Key đã được liên kết với thiết bị khác."
+      };
+    }
+
+    const fresh = await env.DB.prepare(
+      `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
+    ).bind(key).first();
+
+    return { ok: true, row: fresh || row };
+  }
+
+  // Fail closed instead of silently accepting a key without device binding.
+  return {
+    ok: false,
+    error: "D1_SCHEMA_UNSUPPORTED"
+  };
+}
+
+const LIBLOADER_LEGACY_SECRET =
+  "VWnSvunmScLMb9KAo68bSrKYIKOo5Jqm";
+const LIBLOADER_LEGACY_GAME = "FF";
+const LIBLOADER_LEGACY_PACKAGE = "com.dts.freefiremax";
+
+function libloaderLegacyFailure(reason) {
+  return json({
+    status: false,
+    reason: String(reason || "Không thể xác thực key.")
+  });
+}
+
+async function handleLegacyLibloaderClaim(form, env) {
+  const submittedGame = String(form.get("game") || "");
+  const submittedKey = String(form.get("user_key") || "");
+  const submittedSerial = String(form.get("serial") || "");
+  const submittedPackage = String(form.get("package") || "");
+
+  if (!submittedKey.trim() || !submittedSerial.trim()) {
+    return libloaderLegacyFailure("Thiếu key hoặc mã thiết bị.");
+  }
+
+  if (
+    submittedGame !== LIBLOADER_LEGACY_GAME ||
+    submittedPackage !== LIBLOADER_LEGACY_PACKAGE
+  ) {
+    return libloaderLegacyFailure("Ứng dụng gửi yêu cầu không hợp lệ.");
+  }
+
+  let key;
+  let deviceId;
+
+  try {
+    // Normalize only for the database and device hash. The MD5 response must
+    // use the exact form values because libloader calculates the same value.
+    key = normalizeKey(submittedKey);
+    deviceId = normalizeDeviceId(submittedSerial);
+  } catch (error) {
+    return libloaderLegacyFailure(
+      error instanceof Error ? error.message : "Key không hợp lệ."
+    );
+  }
+
+  const hash = await deviceHash(env, deviceId);
+  const now = Date.now();
+  const row = await env.DB.prepare(
+    `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
+  )
+    .bind(key)
+    .first();
+
+  if (!row) {
+    return libloaderLegacyFailure("Không tìm thấy key.");
+  }
+
+  if (row.status === "revoked") {
+    return libloaderLegacyFailure("Key đã bị thu hồi.");
+  }
+
+  if (now >= Number(row.expires_at)) {
+    return libloaderLegacyFailure("Key đã hết hạn.");
+  }
+
+  const claimResult = await claimDeviceForKey(
+    env,
+    key,
+    row,
+    hash,
+    now
+  );
+
+  if (!claimResult.ok) {
+    return libloaderLegacyFailure(claimResult.error);
+  }
+
+  const token = md5Hex(
+    `${submittedGame}-${submittedKey}-${submittedSerial}-${submittedPackage}-${LIBLOADER_LEGACY_SECRET}`
+  );
+
+  return json({
+    status: true,
+    data: {
+      token,
+      rng: Math.floor(Date.now() / 1000),
+      EXP: new Date(Number(row.expires_at)).toISOString(),
+      modname: "Sent Tweaks"
+    }
+  });
+}
+
+async function handleNativeClaim(request, env) {
   const contentType = String(
     request.headers.get("content-type") || ""
   ).toLowerCase();
@@ -1866,6 +2172,8 @@ async function handleLegacyLibmainClaim(request, env) {
   const rawBody = await request.text();
   const form = new URLSearchParams(rawBody);
 
+  // Compatibility for legacy libloader.so: its wire protocol uses
+  // game, user_key, serial and package, and expects an MD5 token response.
   if (form.has("user_key") || form.has("serial")) {
     return handleLegacyLibloaderClaim(form, env);
   }
@@ -1874,183 +2182,65 @@ async function handleLegacyLibmainClaim(request, env) {
   const submittedDeviceId = String(form.get("deviceid") || "").trim();
 
   if (!submittedKey || !submittedDeviceId) {
-    return libmainLegacyResponse(
-      false,
-      "Missing key or device."
-    );
-  }
-
-  try {
-    const key = normalizeKey(submittedKey);
-    const deviceId = normalizeDeviceId(submittedDeviceId);
-    const hash = await deviceHash(env, deviceId);
-    const now = Date.now();
-
-    const row = await env.DB.prepare(
-      `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
-    )
-      .bind(key)
-      .first();
-
-    if (!row) {
-      return libmainLegacyResponse(false, "Key not found.");
-    }
-
-    if (row.status === "revoked") {
-      return libmainLegacyResponse(false, "Key revoked.");
-    }
-
-    if (now >= Number(row.expires_at)) {
-      return libmainLegacyResponse(false, "Key expired.");
-    }
-
-    const claimResult = await claimDeviceForKey(
-      env,
-      key,
-      row,
-      hash,
-      now
-    );
-
-    if (!claimResult.ok) {
-      return libmainLegacyResponse(
-        false,
-        "Key linked to another device."
-      );
-    }
-
-    return libmainLegacyResponse(true, "suc");
-  } catch (error) {
-    console.error(JSON.stringify({
-      event: "legacy_libmain_login_error",
-      error: String(error?.message || error)
-    }));
-
-    return libmainLegacyResponse(
-      false,
-      "Invalid key or device."
-    );
-  }
-}
-
-
-/*
- * =====================================================
- * JAVA LOGIN COMPATIBILITY — Kurama/Sent Tweaks APK
- * =====================================================
- * Request expected by LoginActivity:
- *   POST /validate
- *   Content-Type: application/json
- *   {"key":"...","hwid":"..."}
- *
- * Response expected by LoginActivity:
- *   {"success":true|false,"message":"..."}
- *
- * This adapter performs the same D1/status/expiry/device-binding checks
- * as the normal claim path. It is intentionally fail-closed.
- */
-async function handleJavaLoginValidate(request, env) {
-  if (request.method !== "POST") {
     return json({
-      success: false,
-      message: "METHOD_NOT_ALLOWED"
-    }, 405);
+      ok: false,
+      valid: false,
+      error: "LEGACY_FIELDS_REQUIRED"
+    }, 400);
   }
 
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({
-      success: false,
-      message: "Invalid JSON."
-    }, 200);
+  // Normalize only for D1 lookup. The response token MUST use the exact key
+  // string submitted by the native client, because the client calculates the
+  // same token locally from its original input.
+  const key = normalizeKey(submittedKey);
+  const deviceId = normalizeDeviceId(submittedDeviceId);
+  const hash = await deviceHash(env, deviceId);
+  const now = Date.now();
+
+  const row = await env.DB.prepare(
+    `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
+  )
+    .bind(key)
+    .first();
+
+  if (!row) {
+    return json({ ok: false, valid: false, error: "Không tìm thấy key." }, 404);
   }
 
-  const submittedKey = String(body?.key || "").trim();
-  const submittedDeviceId = String(
-    body?.hwid ?? body?.deviceId ?? body?.deviceid ?? ""
-  ).trim();
-
-  if (!submittedKey || !submittedDeviceId) {
-    return json({
-      success: false,
-      message: "Key or device is missing."
-    }, 200);
+  if (row.status === "revoked") {
+    return json({ ok: false, valid: false, error: "Key đã bị thu hồi." }, 403);
   }
 
-  try {
-    const key = normalizeKey(submittedKey);
-    const deviceId = normalizeDeviceId(submittedDeviceId);
-    const hash = await deviceHash(env, deviceId);
-    const now = Date.now();
-
-    const row = await env.DB.prepare(
-      `SELECT * FROM keys WHERE license_key = ? LIMIT 1`
-    )
-      .bind(key)
-      .first();
-
-    if (!row) {
-      return json({
-        success: false,
-        message: "Key not found."
-      }, 200);
-    }
-
-    if (String(row.status || "").toLowerCase() === "revoked") {
-      return json({
-        success: false,
-        message: "Key revoked."
-      }, 200);
-    }
-
-    if (now >= Number(row.expires_at || 0)) {
-      return json({
-        success: false,
-        message: "Key expired."
-      }, 200);
-    }
-
-    const claimResult = await claimDeviceForKey(
-      env,
-      key,
-      row,
-      hash,
-      now
-    );
-
-    if (!claimResult.ok) {
-      return json({
-        success: false,
-        message: "Key linked to another device."
-      }, 200);
-    }
-
-    const fresh = claimResult.row || row;
-    const expiresAt = Number(fresh.expires_at || row.expires_at || 0);
-
-    return json({
-      success: true,
-      message: "suc",
-      data: {
-        remainingSeconds: Math.max(
-          0,
-          Math.floor((expiresAt - now) / 1000)
-        )
-      }
-    }, 200);
-  } catch (error) {
-    console.error(JSON.stringify({
-      event: "java_login_validate_error",
-      error: String(error?.message || error)
-    }));
-
-    return json({
-      success: false,
-      message: "Invalid key or device."
-    }, 200);
+  if (now >= Number(row.expires_at)) {
+    return json({ ok: false, valid: false, error: "Key đã hết hạn." }, 403);
   }
+
+  const claimResult = await claimNativeDevice(
+    env,
+    key,
+    row,
+    deviceId,
+    hash,
+    now
+  );
+
+  if (!claimResult.ok) {
+    return json({
+      ok: false,
+      valid: false,
+      error: claimResult.error
+    }, 409);
+  }
+
+  const token = nativeTokenEncode(
+    `meostar-${submittedKey}-${deviceId}`
+  );
+
+  return json({
+    ok: true,
+    valid: true,
+    token
+  });
 }
 
 async function handleClaim(
@@ -2223,112 +2413,6 @@ async function handleDualSchemaClaim(
   return handleClaim(modernRequest, env);
 }
 
-/*
- * =====================================================
- * VERIFY KEY
- * =====================================================
- */
-
-async function handleVerify(
-  request,
-  env
-) {
-  const body =
-    await readJson(request);
-
-  const requestMetadata =
-    readAuthRequestMetadata(body);
-
-  enforceAuthPolicy(env, requestMetadata);
-
-  const key =
-    normalizeKey(body.key);
-
-  const deviceId =
-    normalizeDeviceId(
-      body.deviceId
-    );
-
-  const hash =
-    await deviceHash(
-      env,
-      deviceId
-    );
-
-  const now = Date.now();
-
-  const row =
-    await env.DB.prepare(
-      `SELECT *
-       FROM keys
-       WHERE license_key = ?`
-    )
-      .bind(key)
-      .first();
-
-  if (!row) {
-    return json({
-      ok: true,
-      valid: false,
-      reason: "not_found"
-    });
-  }
-
-  if (row.status === "revoked") {
-    return json({
-      ok: true,
-      valid: false,
-      reason: "revoked",
-      data: publicKeyRow(row, now)
-    });
-  }
-
-  if (now >= Number(row.expires_at)) {
-    return json({
-      ok: true,
-      valid: false,
-      reason: "expired",
-      data: publicKeyRow(row, now)
-    });
-  }
-
-  const binding = deviceBindingInfo(row);
-
-  if (!binding.bound) {
-    return json({
-      ok: true,
-      valid: false,
-      reason: "not_claimed",
-      data: publicKeyRow(row, now)
-    });
-  }
-
-  if (!binding.hashes.includes(hash)) {
-    return json({
-      ok: true,
-      valid: false,
-      reason: "wrong_device",
-      data: publicKeyRow(row, now)
-    });
-  }
-
-  const payload = {
-    ok: true,
-    valid: true,
-    data: publicKeyRow(row, now)
-  };
-
-  return json(
-    await withSignedAuthResponse(
-      env,
-      "/api/verify",
-      requestMetadata,
-      deviceId,
-      payload
-    )
-  );
-}
-
 async function handleRevoke(
   request,
   env
@@ -2394,8 +2478,6 @@ async function route(
         Boolean(
           env.LINK4M_API_TOKEN
         ),
-
-      link4mSteps: 2,
 
       authSigning:
         Boolean(
@@ -2470,37 +2552,9 @@ async function route(
     );
   }
 
-  /*
-   * Route ngắn dành riêng cho các native client cũ.
-   * Giữ /api/claim cho client Auth V4 hiện tại.
-   */
-  if (
-    request.method === "POST" &&
-    (
-      path === "/a" ||
-      path === "/"
-    )
-  ) {
-    return handleLegacyLibmainClaim(
-      request,
-      env
-    );
-  }
-
-
-  // Compatibility endpoint for the Java LoginActivity in the protected APK.
-  if (
-    request.method === "POST" &&
-    path === "/validate"
-  ) {
-    return handleJavaLoginValidate(
-      request,
-      env
-    );
-  }
 
   /*
-   * API claim đã chuyển sang adapter.
+   * Single authentication endpoint for both native form and Auth V4 JSON.
    */
   if (
     request.method === "POST" &&
@@ -2510,10 +2564,10 @@ async function route(
       request.headers.get("content-type") || ""
     ).toLowerCase();
 
-    // Native client cũ dùng CURLOPT_POSTFIELDS => form-urlencoded.
-    // Client Auth V4 hiện tại vẫn đi nguyên luồng JSON bên dưới.
+    // Native lib uses CURLOPT_POSTFIELDS => form-urlencoded.
+    // Auth V4 JSON clients continue through the signed JSON path.
     if (!contentType.includes("application/json")) {
-      return handleLegacyLibmainClaim(
+      return handleNativeClaim(
         request,
         env
       );
@@ -2526,15 +2580,6 @@ async function route(
     );
   }
 
-  if (
-    request.method === "POST" &&
-    path === "/api/verify"
-  ) {
-    return handleVerify(
-      request,
-      env
-    );
-  }
 
   if (
     request.method === "POST" &&
