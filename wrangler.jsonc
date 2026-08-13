@@ -1,13 +1,15 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "snowy-cherry-0514",
-  "main": "auth-worker.js",
+  "name": "sentkeyfree",
+  "main": "index.js",
   "compatibility_date": "2026-08-01",
   "assets": {
     "directory": ".",
     "binding": "ASSETS",
     "run_worker_first": [
       "/api/*",
+      "/validate",
+      "/c",
       "/a",
       "/auth",
       "/login",
