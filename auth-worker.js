@@ -194,11 +194,11 @@ function normalizeMaxDevices(value) {
 
 function normalizeFreePlanHours(value) {
   const planHours = Number(value);
-  const allowed = new Set([12, 24]);
+  const allowed = new Set([12, 24, 72, 168, 720]);
 
   if (!Number.isInteger(planHours) || !allowed.has(planHours)) {
     throw new Error(
-      "Gói Free không hợp lệ. Hỗ trợ 12 giờ hoặc 24 giờ."
+      "Gói Free không hợp lệ. Hỗ trợ 12h, 24h, 3 ngày, 7 ngày hoặc 30 ngày."
     );
   }
 
