@@ -1368,12 +1368,286 @@ async function forwardVipAlias(request, env, ctx, targetPath) {
   );
 }
 
+
+/* =========================================================
+ * GET MOD — VIP-authenticated feature asset delivery
+ * Only this endpoint is added. Existing routes remain unchanged.
+ * ========================================================= */
+
+function getModSafeSegment(value, fallback = "default") {
+  const text = String(value ?? "").trim().slice(0, 80) || fallback;
+  return text.replace(/[^A-Za-z0-9_.:+*\-]/g, "_");
+}
+
+function getModJson(data, status = 200) {
+  return json(data, status);
+}
+
+async function handleGetMod(request, env, ctx) {
+  if (request.method === "GET") {
+    return getModJson({
+      ok: true,
+      service: "get_mod.php",
+      method: "POST",
+      vipOnly: true
+    });
+  }
+
+  if (request.method !== "POST") {
+    return getModJson({
+      status: false,
+      error: "METHOD_NOT_ALLOWED"
+    }, 405);
+  }
+
+  const contentType = String(
+    request.headers.get("content-type") || ""
+  ).toLowerCase();
+
+  let key = "";
+  let deviceId = "";
+  let feature = "";
+  let mode = "default";
+  let game = "default";
+  let appVersion = "default";
+
+  if (contentType.includes("application/json")) {
+    const body = await request.json().catch(() => ({}));
+
+    key = firstString(body, [
+      "key_code",
+      "key",
+      "licenseKey",
+      "license_key",
+      "code"
+    ]);
+
+    deviceId = firstString(body, [
+      "udid",
+      "deviceId",
+      "device_id",
+      "device"
+    ]);
+
+    feature = firstString(body, [
+      "feature",
+      "mod",
+      "name"
+    ]);
+
+    mode = firstString(body, ["mode"]) || "default";
+    game = firstString(body, ["game"]) || "default";
+    appVersion =
+      firstString(body, ["app_ver", "appVersion", "version"]) ||
+      "default";
+  } else {
+    const form = new URLSearchParams(
+      await request.text()
+    );
+
+    key =
+      form.get("key_code") ||
+      form.get("key") ||
+      form.get("license_key") ||
+      form.get("code") ||
+      "";
+
+    deviceId =
+      form.get("udid") ||
+      form.get("deviceId") ||
+      form.get("device_id") ||
+      form.get("device") ||
+      "";
+
+    feature =
+      form.get("feature") ||
+      form.get("mod") ||
+      form.get("name") ||
+      "";
+
+    mode = form.get("mode") || "default";
+    game = form.get("game") || "default";
+    appVersion =
+      form.get("app_ver") ||
+      form.get("appVersion") ||
+      form.get("version") ||
+      "default";
+  }
+
+  key = normalizeDatabaseKey(key);
+  deviceId = String(deviceId || "").trim();
+  feature = getModSafeSegment(feature, "");
+  mode = getModSafeSegment(mode);
+  game = getModSafeSegment(game);
+  appVersion = getModSafeSegment(appVersion);
+
+  if (!key || !deviceId || !feature) {
+    return getModJson({
+      status: false,
+      error: "MISSING_FIELDS",
+      message: "Thiếu key_code, udid hoặc feature."
+    }, 400);
+  }
+
+  /*
+   * Reuse the existing VIP claim path instead of duplicating license,
+   * expiry and device-binding logic.
+   */
+  const authUrl = new URL(request.url);
+  authUrl.pathname = "/api/vip/claim";
+  authUrl.search = "";
+
+  const authRequest = new Request(
+    authUrl.toString(),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept": "application/json"
+      },
+      body: JSON.stringify({
+        key,
+        deviceId
+      })
+    }
+  );
+
+  const authResponse =
+    await forwardVipAlias(
+      authRequest,
+      env,
+      ctx,
+      "/api/claim"
+    );
+
+  if (!authResponse.ok) {
+    const raw = await authResponse.text();
+
+    try {
+      const payload = JSON.parse(raw);
+      return getModJson({
+        status: false,
+        error:
+          payload.error ||
+          payload.reason ||
+          "VIP_AUTH_FAILED",
+        message:
+          payload.reason ||
+          payload.message ||
+          payload.error ||
+          "Key VIP không hợp lệ."
+      }, authResponse.status || 403);
+    } catch {
+      return getModJson({
+        status: false,
+        error: "VIP_AUTH_FAILED",
+        message: raw || "Key VIP không hợp lệ."
+      }, authResponse.status || 403);
+    }
+  }
+
+  let authPayload = null;
+
+  try {
+    authPayload =
+      await authResponse.clone().json();
+  } catch {}
+
+  if (
+    authPayload?.valid !== true ||
+    String(
+      authPayload?.data?.status || ""
+    ).toLowerCase() !== "active"
+  ) {
+    return getModJson({
+      status: false,
+      error: "VIP_AUTH_FAILED",
+      message: "Key VIP không còn hiệu lực."
+    }, 403);
+  }
+
+  if (!env.ASSETS || typeof env.ASSETS.fetch !== "function") {
+    return getModJson({
+      status: false,
+      error: "ASSETS_NOT_BOUND",
+      message: "Kho feature chưa được liên kết."
+    }, 503);
+  }
+
+  const candidates = [
+    `/feature-files/${game}/${feature}/${mode}/${appVersion}.bin`,
+    `/feature-files/${game}/${feature}/${mode}/default.bin`,
+    `/feature-files/${game}/${feature}/default.bin`,
+    `/feature-files/${feature}.bin`
+  ];
+
+  for (const assetPath of candidates) {
+    const assetUrl = new URL(request.url);
+    assetUrl.pathname = assetPath;
+    assetUrl.search = "";
+
+    const assetResponse =
+      await env.ASSETS.fetch(
+        new Request(
+          assetUrl.toString(),
+          { method: "GET" }
+        )
+      );
+
+    if (assetResponse.status === 404) {
+      continue;
+    }
+
+    if (!assetResponse.ok) {
+      continue;
+    }
+
+    const headers =
+      new Headers(assetResponse.headers);
+
+    headers.set(
+      "cache-control",
+      "no-store"
+    );
+
+    headers.set(
+      "x-sent-feature",
+      feature
+    );
+
+    return new Response(
+      assetResponse.body,
+      {
+        status: 200,
+        headers
+      }
+    );
+  }
+
+  return getModJson({
+    status: false,
+    error: "FEATURE_NOT_CONFIGURED",
+    message: "Feature chưa có dữ liệu."
+  }, 404);
+}
+
+
 export default {
   async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
       const path =
         url.pathname.replace(/\/+$/, "") || "/";
+
+      if (
+        path === "/get_mod.php"
+      ) {
+        return handleGetMod(
+          request,
+          env,
+          ctx
+        );
+      }
 
       // Stable Link4m session lifecycle.
       // This bypasses index.js's old cleanup that deleted completed history.
