@@ -26,6 +26,12 @@
       "migrations_dir": "."
     }
   ],
+  "kv_namespaces": [
+    {
+      "binding": "FEATURES_KV",
+      "id": "353ac39868314228adedbfde86b6334e"
+    }
+  ],
   "vars": {
     "DEMO_MODE": "false",
     "AUTH_ENABLED": "true",

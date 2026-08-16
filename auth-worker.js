@@ -1389,7 +1389,9 @@ async function handleGetMod(request, env, ctx) {
       ok: true,
       service: "get_mod.php",
       method: "POST",
-      vipOnly: true
+      vipOnly: true,
+      storage: "workers-kv",
+      kvBound: Boolean(env.FEATURES_KV)
     });
   }
 
@@ -1566,57 +1568,41 @@ async function handleGetMod(request, env, ctx) {
     }, 403);
   }
 
-  if (!env.ASSETS || typeof env.ASSETS.fetch !== "function") {
+  if (!env.FEATURES_KV || typeof env.FEATURES_KV.get !== "function") {
     return getModJson({
       status: false,
-      error: "ASSETS_NOT_BOUND",
-      message: "Kho feature chưa được liên kết."
+      error: "FEATURES_KV_NOT_BOUND",
+      message: "Kho KV sent-features chưa được liên kết."
     }, 503);
   }
 
   const candidates = [
-    `/feature-files/${game}/${feature}/${mode}/${appVersion}.bin`,
-    `/feature-files/${game}/${feature}/${mode}/default.bin`,
-    `/feature-files/${game}/${feature}/default.bin`,
-    `/feature-files/${feature}.bin`
+    `features/${game}/${feature}/${mode}/${appVersion}.bin`,
+    `features/${game}/${feature}/${mode}/default.bin`,
+    `features/${game}/${feature}/default.bin`,
+    `features/${feature}.bin`
   ];
 
-  for (const assetPath of candidates) {
-    const assetUrl = new URL(request.url);
-    assetUrl.pathname = assetPath;
-    assetUrl.search = "";
+  for (const storageKey of candidates) {
+    const value = await env.FEATURES_KV.get(
+      storageKey,
+      { type: "arrayBuffer" }
+    );
 
-    const assetResponse =
-      await env.ASSETS.fetch(
-        new Request(
-          assetUrl.toString(),
-          { method: "GET" }
-        )
-      );
-
-    if (assetResponse.status === 404) {
+    if (value === null) {
       continue;
     }
 
-    if (!assetResponse.ok) {
-      continue;
-    }
-
-    const headers =
-      new Headers(assetResponse.headers);
-
-    headers.set(
-      "cache-control",
-      "no-store"
-    );
-
-    headers.set(
-      "x-sent-feature",
-      feature
-    );
+    const headers = new Headers({
+      "content-type": "application/octet-stream",
+      "cache-control": "no-store",
+      "x-sent-feature": feature,
+      "x-sent-storage": "kv",
+      "x-sent-storage-key": storageKey
+    });
 
     return new Response(
-      assetResponse.body,
+      value,
       {
         status: 200,
         headers
@@ -1627,7 +1613,7 @@ async function handleGetMod(request, env, ctx) {
   return getModJson({
     status: false,
     error: "FEATURE_NOT_CONFIGURED",
-    message: "Feature chưa có dữ liệu."
+    message: "Feature chưa có dữ liệu trong KV."
   }, 404);
 }
 
