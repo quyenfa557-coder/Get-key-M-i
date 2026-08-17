@@ -263,6 +263,17 @@ function mapKeyRow(row, now = Date.now()) {
   const createdAt = Number(row.created_at);
   const binding = deviceBindingInfo(row.device_hash);
 
+  const storedPlanHours = Number(row.plan_hours || 0);
+  const derivedPlanHours =
+    Number.isFinite(createdAt) &&
+    Number.isFinite(expiresAt) &&
+    expiresAt > createdAt
+      ? Math.round((expiresAt - createdAt) / (60 * 60 * 1000))
+      : 0;
+  const planHours = derivedPlanHours > 0
+    ? derivedPlanHours
+    : storedPlanHours;
+
   let status = "active";
 
   if (row.status === "revoked") {
@@ -273,7 +284,7 @@ function mapKeyRow(row, now = Date.now()) {
 
   return {
     key: row.license_key,
-    planHours: Number(row.plan_hours || 0),
+    planHours,
     bound: binding.bound,
     maxDevices: binding.maxDevices,
     devicesUsed: binding.devicesUsed,
@@ -1082,7 +1093,7 @@ async function insertUniqueVipKey(env, planHours, maxDevices, note) {
            VALUES (?, ?, ?, ?, ?, 'active')`
         ).bind(
           licenseKey,
-          planHours,
+          planHours > 24 ? 24 : planHours,
           initialBinding,
           now,
           expiresAt
