@@ -1001,7 +1001,7 @@ async function insertUniqueAdminFreeKey(env, planHours, maxDevices) {
       )
         .bind(
           licenseKey,
-          planHours,
+          planHours > 24 ? 24 : planHours,
           initialBinding,
           now,
           expiresAt
