@@ -4,6 +4,7 @@
 // Existing index.js remains responsible for expiry, device binding,
 // Auth V4 signatures and legacy-client compatibility.
 import signedWorker from "./index.js";
+import { validateRequest, sentinelResponse } from "./ddos-sentinel.js";
 
 const AUTH_PROTOCOL_VERSION = 4;
 const DEFAULT_BUILD_ID = "sent-menu-2026.08.07-r1";
@@ -1632,6 +1633,11 @@ async function handleGetMod(request, env, ctx) {
 export default {
   async fetch(request, env, ctx) {
     try {
+      const sentinel = await validateRequest(request, env, ctx);
+      if (!sentinel.allowed) {
+        return sentinelResponse(sentinel);
+      }
+
       const url = new URL(request.url);
       const path =
         url.pathname.replace(/\/+$/, "") || "/";

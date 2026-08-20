@@ -14,6 +14,7 @@
       "/verify",
       "/check",
       "/license/*",
+      "/get_mod.php",
       "/senttwgetkey",
       "/senttwnhankey"
     ]
@@ -32,11 +33,40 @@
       "id": "353ac39868314228adedbfde86b6334e"
     }
   ],
+  "ratelimits": [
+    {
+      "name": "SENTINEL_API_LIMITER",
+      "namespace_id": "55742601",
+      "simple": { "limit": 60, "period": 60 }
+    },
+    {
+      "name": "SENTINEL_BURST_LIMITER",
+      "namespace_id": "55742602",
+      "simple": { "limit": 30, "period": 10 }
+    },
+    {
+      "name": "SENTINEL_GLOBAL_LIMITER",
+      "namespace_id": "55742603",
+      "simple": { "limit": 5000, "period": 60 }
+    },
+    {
+      "name": "SENTINEL_ALERT_LIMITER",
+      "namespace_id": "55742604",
+      "simple": { "limit": 1, "period": 60 }
+    }
+  ],
   "vars": {
     "DEMO_MODE": "false",
     "AUTH_ENABLED": "true",
     "AUTH_ACTIVE_BUILD_ID": "sent-menu-2026.08.07-r1",
     "AUTH_CLIENT_VERSION": "5.2.1",
-    "AUTH_POLICY_GENERATION": "1"
+    "AUTH_POLICY_GENERATION": "1",
+    "SENTINEL_ENABLED": "true",
+    "RATE_LIMIT_PER_IP": "60",
+    "RATE_LIMIT_WINDOW": "60",
+    "BURST_THRESHOLD": "15",
+    "GLOBAL_RATE_LIMIT": "5000",
+    "LOCKOUT_SECONDS": "300",
+    "ATTACK_LOG_RETENTION_DAYS": "7"
   }
 }
