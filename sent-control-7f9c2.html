@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="theme-color" content="#06101d">
   <title>Sent Control Center</title>
-  <link rel="stylesheet" href="/sent-control.css?v=sent-admin-6">
+  <link rel="stylesheet" href="/sent-control.css?v=sent-admin-8">
 </head>
 <body>
   <div class="background-grid" aria-hidden="true"></div>
@@ -18,7 +18,7 @@
       <div class="brand">
         <div class="logo" aria-hidden="true">S</div>
         <div>
-          <strong>Sent Control Center</strong>
+          <strong>Sent Control Center <em class="version-badge">V8</em></strong>
           <span>FREE + VIP license administration</span>
         </div>
       </div>
@@ -56,7 +56,20 @@
     </section>
 
     <section id="dashboard" class="dashboard hidden">
-      <section class="dashboard-hero">
+      <section class="command-bar">
+        <div class="command-title"><span class="live-dot"></span><div><strong>Sent Tweaks Admin</strong><small>Control Center • Production • V9</small></div></div>
+        <div class="command-actions"><button id="topRefreshBtn" class="icon-action" type="button">↻ <span>Làm mới</span></button><button id="topLogoutBtn" class="icon-action danger-soft" type="button">⎋ <span>Đăng xuất</span></button></div>
+      </section>
+      <section class="system-strip"><div><span class="pulse"></span><strong>API Admin</strong><small id="apiHealth">Đang kiểm tra</small></div><div><strong>Dữ liệu</strong><small id="dataFreshness">Chưa đồng bộ</small></div><div><strong>Múi giờ</strong><small>Việt Nam • UTC+7</small></div><div><strong>Phiên quản trị</strong><small>Đã xác thực</small></div></section>
+      <nav class="admin-nav" aria-label="Điều hướng quản trị"><span class="nav-label">CONTROL</span>
+        <a href="#overview">Tổng quan</a>
+        <a href="#security">Bảo mật</a>
+        <a href="#free-keys">Free</a>
+        <a href="#vip-keys">VIP</a>
+        <a href="#license-tools">Công cụ</a>
+      </nav>
+
+      <section id="overview" class="dashboard-hero">
         <div>
           <span class="eyebrow">FREE / LINK4M ANALYTICS</span>
           <h1>Tổng quan hệ thống key Free</h1>
@@ -69,7 +82,7 @@
         </button>
       </section>
 
-      <div class="stats-grid" aria-live="polite">
+      <div class="stats-grid premium-stats" aria-live="polite">
         <article class="stat-card stat-primary">
           <div class="stat-icon" aria-hidden="true">↗</div>
           <div>
@@ -136,7 +149,36 @@
 
       <p id="statsMessage" class="message stats-message" aria-live="polite"></p>
 
-      <section class="dashboard-hero" style="margin-top:18px">
+      <section class="card intelligence-card"><div class="section-heading compact"><span class="eyebrow">SYSTEM INTELLIGENCE</span><h2>Tình trạng vận hành</h2><p>Tóm tắt tự động từ dữ liệu thật của server.</p></div><div class="insight-grid"><article><span>Free khả dụng</span><strong id="freeHealth">—</strong><small id="freeHealthNote">Đang tính</small></article><article><span>VIP khả dụng</span><strong id="vipHealth">—</strong><small id="vipHealthNote">Đang tính</small></article><article><span>Xu hướng hôm nay</span><strong id="trendHealth">—</strong><small id="trendHealthNote">So với hôm qua</small></article><article><span>An ninh</span><strong id="securityHealth">—</strong><small id="securityHealthNote">Chờ Sentinel</small></article></div></section>
+      <section id="security" class="card security-card">
+        <div class="section-heading compact row-heading">
+          <div>
+            <span class="eyebrow">SENTINEL SECURITY CENTER</span>
+            <h2>DDoS &amp; bảo mật 24 giờ</h2>
+            <p>Theo dõi sự kiện bị chặn, client bất thường và block đang hoạt động từ Sentinel.</p>
+          </div>
+          <span id="securityUpdated" class="last-updated">Chưa cập nhật</span>
+        </div>
+        <div class="security-grid">
+          <article class="security-metric"><span>Sự kiện bảo mật</span><strong id="securityEvents">—</strong><small>24 giờ gần nhất</small></article>
+          <article class="security-metric"><span>Client bất thường</span><strong id="securityClients">—</strong><small>Client duy nhất</small></article>
+          <article class="security-metric"><span>Block đang chạy</span><strong id="securityBlocks">—</strong><small>Đang bị Sentinel chặn</small></article>
+          <article class="security-metric"><span>Trạng thái</span><strong id="securityStatus" class="security-ok">ONLINE</strong><small id="securityWindow">Sentinel V2</small></article>
+        </div>
+        <div class="security-columns">
+          <div>
+            <h3>Lý do chặn nhiều nhất</h3>
+            <div id="securityReasons" class="security-list"><div class="security-empty">Chưa có dữ liệu.</div></div>
+          </div>
+          <div>
+            <h3>Sự kiện gần đây</h3>
+            <div id="securityRecent" class="security-list"><div class="security-empty">Chưa có dữ liệu.</div></div>
+          </div>
+        </div>
+        <p id="securityMessage" class="message" aria-live="polite"></p>
+      </section>
+
+      <section id="free-keys" class="dashboard-hero" style="margin-top:18px">
         <div>
           <span class="eyebrow">ADMIN FREE LICENSES</span>
           <h1>Tạo key Free thủ công</h1>
@@ -219,7 +261,7 @@
         </section>
       </div>
 
-      <section class="dashboard-hero" style="margin-top:18px">
+      <section id="vip-keys" class="dashboard-hero" style="margin-top:18px">
         <div>
           <span class="eyebrow">VIP / PAID LICENSES</span>
           <h1>Key bán / VIP</h1>
@@ -397,7 +439,7 @@
         </div>
       </section>
 
-      <section class="card revoke-card">
+      <section id="license-tools" class="card revoke-card">
         <div class="section-heading compact">
           <span class="eyebrow">REVOKE LICENSE</span>
           <h2>Thu hồi key</h2>
@@ -424,6 +466,6 @@
     </section>
   </main>
 
-  <script src="/sent-control.js?v=sent-admin-free-vip-4" defer></script>
+  <script src="/sent-control.js?v=sent-admin-7" defer></script>
 </body>
 </html>

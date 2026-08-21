@@ -13,6 +13,7 @@
   const revokeMessage = $("revokeMessage");
   const statsMessage = $("statsMessage");
   const vipStatsMessage = $("vipStatsMessage");
+  const securityMessage = $("securityMessage");
 
   const resultList = $("resultList");
   const emptyResult = $("emptyResult");
@@ -296,6 +297,65 @@
       )}`;
   }
 
+  function renderSecurityStats(payload) {
+    const stats = payload.stats || {};
+    $("securityEvents").textContent = formatNumber(stats.totalEvents);
+    $("securityClients").textContent = formatNumber(stats.uniqueClients);
+    $("securityBlocks").textContent = formatNumber(stats.activeBlocks);
+    $("securityStatus").textContent = "ONLINE";
+    $("securityStatus").className = "security-ok";
+    $("securityWindow").textContent = `${Number(payload.windowHours) || 24} giờ • sampled`;
+    $("securityUpdated").textContent = `Cập nhật ${formatDate(payload.generatedAt || new Date().toISOString())}`;
+
+    const reasons = Array.isArray(payload.reasons) ? payload.reasons : [];
+    const reasonBox = $("securityReasons");
+    reasonBox.replaceChildren();
+    if (!reasons.length) {
+      const empty = document.createElement("div");
+      empty.className = "security-empty";
+      empty.textContent = "Không có sự kiện đáng chú ý.";
+      reasonBox.append(empty);
+    } else {
+      reasons.slice(0, 6).forEach(item => {
+        const row = document.createElement("div");
+        row.className = "security-row";
+        const label = document.createElement("span");
+        label.textContent = item.reason || "UNKNOWN";
+        const value = document.createElement("strong");
+        value.textContent = formatNumber(item.count);
+        row.append(label, value);
+        reasonBox.append(row);
+      });
+    }
+
+    const recent = Array.isArray(payload.recent) ? payload.recent : [];
+    const recentBox = $("securityRecent");
+    recentBox.replaceChildren();
+    if (!recent.length) {
+      const empty = document.createElement("div");
+      empty.className = "security-empty";
+      empty.textContent = "Chưa ghi nhận sự kiện mới.";
+      recentBox.append(empty);
+    } else {
+      recent.slice(0, 6).forEach(item => {
+        const row = document.createElement("div");
+        row.className = "security-event";
+        const main = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = item.reason || "UNKNOWN";
+        const path = document.createElement("span");
+        path.textContent = item.path || "/";
+        main.append(title, path);
+        const meta = document.createElement("small");
+        meta.textContent = `${item.country || "--"} • ${formatDate(item.time)}`;
+        row.append(main, meta);
+        recentBox.append(row);
+      });
+    }
+  }
+
+  function renderSystemIntelligence(freeData,vipData,securityData){const f=freeData?.stats||{},v=vipData?.stats||{};const af=+f.active||0,tf=+f.total||0,av=+v.active||0,tv=+v.total||0;const set=(id,t,n)=>{const e=$(id);if(e)e.textContent=t;if(n&&$(n))$(n).textContent=n==="freeHealthNote"?`${formatNumber(af)} / ${formatNumber(tf)} key hoạt động`:`${formatNumber(av)} / ${formatNumber(tv)} key hoạt động`;};set("freeHealth",tf?Math.round(af/tf*100)+"%":"0%","freeHealthNote");set("vipHealth",tv?Math.round(av/tv*100)+"%":"0%","vipHealthNote");const d=+(f.todayVsYesterday?.difference||0);$("trendHealth").textContent=(d>0?"+":"")+formatNumber(d);$("trendHealthNote").textContent="So với hôm qua";const s=securityData?.stats||{};$("securityHealth").textContent=securityData?((+s.activeBlocks||0)?`${formatNumber(s.activeBlocks)} BLOCK`:"ỔN ĐỊNH"):"CHECK";$("securityHealthNote").textContent=securityData?`${formatNumber(s.totalEvents)} sự kiện`:"Không đọc được Sentinel";if($("apiHealth"))$("apiHealth").textContent="Online • phản hồi hợp lệ";if($("dataFreshness"))$("dataFreshness").textContent=`Đồng bộ ${formatDate(new Date().toISOString())}`;}
+
   async function loadAllStats({ quiet = false } = {}) {
     const button = $("refreshStatsBtn");
 
@@ -323,6 +383,17 @@
       renderFreeStats(freeData);
       renderVipStats(vipData);
 
+      let securityData = null;
+      try {
+        securityData = await adminApi("/api/admin/ddos-stats");
+        renderSecurityStats(securityData);
+        setMessage(securityMessage, "Sentinel đang hoạt động và dữ liệu bảo mật đã cập nhật.", "success");
+      } catch (securityError) {
+        setMessage(securityMessage, securityError.message || "Không thể tải dữ liệu bảo mật.", "error");
+        $("securityStatus").textContent = "CHECK";
+        $("securityStatus").className = "security-warn";
+      }
+
       setMessage(
         statsMessage,
         "Dữ liệu Free/Link4m đã cập nhật theo UTC+7.",
@@ -335,7 +406,8 @@
         "success"
       );
 
-      return { freeData, vipData };
+      renderSystemIntelligence(freeData,vipData,securityData);
+      return { freeData, vipData, securityData };
     } catch (error) {
       setMessage(
         statsMessage,
@@ -348,6 +420,11 @@
         error.message || "Không thể tải thống kê VIP.",
         "error"
       );
+      setMessage(securityMessage, error.message || "Không thể tải dữ liệu bảo mật.", "error");
+      if ($("securityStatus")) {
+        $("securityStatus").textContent = "CHECK";
+        $("securityStatus").className = "security-warn";
+      }
 
       throw error;
     } finally {
@@ -812,6 +889,7 @@
     setMessage(revokeMessage, "");
     setMessage(statsMessage, "");
     setMessage(vipStatsMessage, "");
+    setMessage(securityMessage, "");
 
     showLogin();
   });
@@ -837,4 +915,9 @@
 
   renderCreatedKeys();
   renderFreeCreatedKeys();
+
+  const topRefreshBtn = $("topRefreshBtn");
+  if (topRefreshBtn) topRefreshBtn.addEventListener("click", () => $("refreshStatsBtn")?.click());
+  const topLogoutBtn = $("topLogoutBtn");
+  if (topLogoutBtn) topLogoutBtn.addEventListener("click", () => $("logoutBtn")?.click());
 })();
