@@ -1,4 +1,29 @@
+# Dependencies / VCS / Wrangler state
 node_modules
 .git
 .github
 .wrangler
+
+# Secrets and local config
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+
+# Server-side Worker source: never publish these as static assets
+auth-worker.js
+index.js
+worker.js
+ddos-sentinel.js
+
+# Deployment / database files
+wrangler.jsonc
+wrangler.toml
+package.json
+package-lock.json
+*.sql
+
+# Repository-only documentation / metadata
+README*
+.gitignore
+.assetsignore

@@ -5,7 +5,7 @@
     "deploy": "wrangler deploy --config wrangler.jsonc",
     "migrate": "wrangler d1 migrations apply DB --remote --config wrangler.jsonc",
     "dev": "wrangler dev --config wrangler.jsonc",
-    "db:ddos": "wrangler d1 execute DB --file=0004_ddos_tables.sql --remote --config wrangler.jsonc"
+    "db:ddos": "wrangler d1 migrations apply DB --remote --config wrangler.jsonc"
   },
   "devDependencies": {
     "wrangler": "^4.36.0"

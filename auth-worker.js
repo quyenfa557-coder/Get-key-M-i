@@ -1630,6 +1630,117 @@ async function handleGetMod(request, env, ctx) {
 }
 
 
+/* Sentinel V2 admin analytics.
+ * Reads sampled security events only; it is never on the public fast path.
+ */
+async function handleDDoSStats(request, env) {
+  if (!isAdmin(request, env)) {
+    return json({
+      ok: false,
+      error: "Không có quyền xem thống kê bảo mật."
+    }, 401);
+  }
+
+  if (!env.DB) {
+    return json({
+      ok: false,
+      error: "D1 database chưa được liên kết với Worker."
+    }, 503);
+  }
+
+  const now = Date.now();
+  const since = now - 24 * 60 * 60 * 1000;
+
+  try {
+    const [summary, reasons, recent, activeBlocks] = await Promise.all([
+      env.DB.prepare(
+        `SELECT
+           COUNT(*) AS total_events,
+           COUNT(DISTINCT client_key) AS unique_clients
+         FROM sentinel_attack_logs
+         WHERE timestamp >= ?`
+      ).bind(since).first(),
+
+      env.DB.prepare(
+        `SELECT
+           reason,
+           COUNT(*) AS count,
+           MAX(timestamp) AS last_seen
+         FROM sentinel_attack_logs
+         WHERE timestamp >= ?
+         GROUP BY reason
+         ORDER BY count DESC
+         LIMIT 20`
+      ).bind(since).all(),
+
+      env.DB.prepare(
+        `SELECT
+           reason,
+           timestamp,
+           path,
+           cf_ray,
+           country
+         FROM sentinel_attack_logs
+         WHERE timestamp >= ?
+         ORDER BY timestamp DESC
+         LIMIT 30`
+      ).bind(since).all(),
+
+      env.DB.prepare(
+        `SELECT
+           reason,
+           blocked_at,
+           expires_at
+         FROM sentinel_blocklist
+         WHERE expires_at IS NULL OR expires_at > ?
+         ORDER BY blocked_at DESC
+         LIMIT 100`
+      ).bind(now).all()
+    ]);
+
+    return json({
+      ok: true,
+      generatedAt: new Date(now).toISOString(),
+      windowHours: 24,
+      sampled: true,
+      note: "Security events are sampled so D1 is not written for every blocked request.",
+      stats: {
+        totalEvents: Number(summary?.total_events || 0),
+        uniqueClients: Number(summary?.unique_clients || 0),
+        activeBlocks: (activeBlocks.results || []).length
+      },
+      reasons: (reasons.results || []).map(row => ({
+        reason: String(row.reason || "UNKNOWN"),
+        count: Number(row.count || 0),
+        lastSeen: row.last_seen
+          ? new Date(Number(row.last_seen)).toISOString()
+          : null
+      })),
+      recent: (recent.results || []).map(row => ({
+        reason: String(row.reason || "UNKNOWN"),
+        time: new Date(Number(row.timestamp || now)).toISOString(),
+        path: String(row.path || ""),
+        country: String(row.country || ""),
+        ray: String(row.cf_ray || "")
+      })),
+      blocks: (activeBlocks.results || []).map(row => ({
+        reason: String(row.reason || "UNKNOWN"),
+        blockedAt: new Date(Number(row.blocked_at || now)).toISOString(),
+        expiresAt: row.expires_at
+          ? new Date(Number(row.expires_at)).toISOString()
+          : null
+      }))
+    });
+  } catch (error) {
+    // If 0004/0005 has not been migrated yet, do not affect any normal route.
+    return json({
+      ok: false,
+      error: "Sentinel database chưa sẵn sàng. Hãy chạy migration 0004/0005."
+    }, 503);
+  }
+}
+
+
 export default {
   async fetch(request, env, ctx) {
     try {
@@ -1641,6 +1752,13 @@ export default {
       const url = new URL(request.url);
       const path =
         url.pathname.replace(/\/+$/, "") || "/";
+
+      if (
+        (request.method === "GET" || request.method === "POST") &&
+        path === "/api/admin/ddos-stats"
+      ) {
+        return handleDDoSStats(request, env);
+      }
 
       if (
         path === "/get_mod.php"

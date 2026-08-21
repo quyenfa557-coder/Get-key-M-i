@@ -1,31 +1,44 @@
-// ddos-sentinel.js — Sent Tweaks Sentinel
+// ddos-sentinel.js — Sent Tweaks Sentinel V2
 //
-// Fast path: Cloudflare Workers Rate Limiting bindings.
-// Persistent state: D1 only for temporary blocks + attack analytics.
-// Important: do NOT write one D1 row for every normal request; doing so makes
-// the database itself a bottleneck during a flood.
+// Goals:
+// - Keep FREE/VIP/Link4m/auth/get_mod behavior unchanged.
+// - Do not use D1 on the normal request fast path.
+// - Use Workers Rate Limiting bindings for counters.
+// - Keep only bounded, isolate-local penalty/fallback state in memory.
+// - Persist sampled security events to D1 only after a violation.
+// - Never force browser challenges on native/API routes.
 
-const DEFAULTS = {
-  ipLimit: 60,
-  ipWindowSeconds: 60,
-  burstLimit5s: 15,
-  burstLimit10s: 30,
+const DEFAULTS = Object.freeze({
   globalLimit: 5000,
-  lockoutSeconds: 300
-};
+  apiLimit: 120,
+  authLimit: 60,
+  link4mLimit: 30,
+  adminLimit: 10,
+  featureLimit: 180,
+  callbackLimit: 120,
+  burstLimit10s: 30,
+  burstFallback5s: 15,
+  penaltySeconds: 300,
+  maxBodyBytes: 64 * 1024,
+  maxLocalEntries: 12000,
+  retentionDays: 7
+});
 
 const localWindows = new Map();
-const localAlertWindows = new Map();
+const localPenalties = new Map();
+const localAlerts = new Map();
 let lastLocalCleanup = 0;
 let lastDbCleanup = 0;
+let cachedHmacSecret = null;
+let cachedHmacKeyPromise = null;
 
-function numberEnv(env, name, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
+function intEnv(env, name, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
   const value = Number(env?.[name]);
   if (!Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
-function enabled(env) {
+function isEnabled(env) {
   return String(env?.SENTINEL_ENABLED ?? "true").toLowerCase() !== "false";
 }
 
@@ -38,13 +51,30 @@ export function getClientIP(request) {
   );
 }
 
+function normalizePath(url) {
+  return url.pathname.replace(/\/+$/, "") || "/";
+}
+
 function routeGroup(path) {
   if (path.startsWith("/api/admin/")) return "admin";
-  if (path === "/api/claim" || path === "/api/verify" || path === "/a") {
+
+  if (
+    path === "/api/claim" ||
+    path === "/api/verify" ||
+    path === "/a" ||
+    path === "/auth" ||
+    path === "/login" ||
+    path === "/verify" ||
+    path === "/check" ||
+    path.startsWith("/license/") ||
+    path === "/api/vip/claim" ||
+    path === "/api/vip/verify" ||
+    path === "/api/vip/a"
+  ) {
     return "auth";
   }
+
   if (path.startsWith("/api/link4m/")) return "link4m";
-  if (path.startsWith("/api/vip/")) return "vip";
   if (path === "/get_mod.php") return "feature";
   if (path === "/senttwgetkey" || path === "/senttwnhankey") return "callback";
   if (path.startsWith("/api/")) return "api";
@@ -68,92 +98,177 @@ function shouldProtect(request, path) {
   );
 }
 
-async function sha256Hex(input) {
-  const bytes = new TextEncoder().encode(String(input));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function clientStorageKey(ip, env) {
-  const secret = String(env?.SENTINEL_HASH_SECRET || env?.DEVICE_SALT || "");
-
-  if (!secret) {
-    return sha256Hex(`sentinel:${ip}`);
+function policyFor(group, env) {
+  switch (group) {
+    case "admin":
+      return {
+        binding: env?.SENTINEL_ADMIN_LIMITER,
+        limit: intEnv(env, "SENTINEL_ADMIN_FALLBACK_LIMIT", DEFAULTS.adminLimit, 2, 1000),
+        period: 60
+      };
+    case "auth":
+      return {
+        binding: env?.SENTINEL_AUTH_LIMITER,
+        limit: intEnv(env, "SENTINEL_AUTH_FALLBACK_LIMIT", DEFAULTS.authLimit, 5, 5000),
+        period: 60
+      };
+    case "link4m":
+      return {
+        binding: env?.SENTINEL_LINK4M_LIMITER,
+        limit: intEnv(env, "SENTINEL_LINK4M_FALLBACK_LIMIT", DEFAULTS.link4mLimit, 5, 5000),
+        period: 60
+      };
+    case "feature":
+      return {
+        binding: env?.SENTINEL_FEATURE_LIMITER || env?.SENTINEL_API_LIMITER,
+        limit: intEnv(env, "SENTINEL_FEATURE_FALLBACK_LIMIT", DEFAULTS.featureLimit, 10, 10000),
+        period: 60
+      };
+    case "callback":
+      return {
+        binding: env?.SENTINEL_CALLBACK_LIMITER || env?.SENTINEL_API_LIMITER,
+        limit: intEnv(env, "SENTINEL_CALLBACK_FALLBACK_LIMIT", DEFAULTS.callbackLimit, 10, 10000),
+        period: 60
+      };
+    default:
+      return {
+        binding: env?.SENTINEL_API_LIMITER,
+        limit: intEnv(env, "SENTINEL_API_FALLBACK_LIMIT", DEFAULTS.apiLimit, 10, 10000),
+        period: 60
+      };
   }
-
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(ip));
-  return Array.from(new Uint8Array(sig), b => b.toString(16).padStart(2, "0")).join("");
 }
 
-function cleanupLocalMaps(now) {
-  if (now - lastLocalCleanup < 60_000) return;
+function deleteOldestEntries(map, count) {
+  if (count <= 0) return;
+  let removed = 0;
+  for (const key of map.keys()) {
+    map.delete(key);
+    removed += 1;
+    if (removed >= count) break;
+  }
+}
+
+function enforceLocalCap(map, maxEntries) {
+  if (map.size < maxEntries) return;
+  const removeCount = Math.max(1, Math.ceil(maxEntries * 0.2));
+  deleteOldestEntries(map, removeCount);
+}
+
+function cleanupLocalState(now, maxEntries) {
+  if (now - lastLocalCleanup < 10_000) return;
   lastLocalCleanup = now;
 
   for (const [key, value] of localWindows) {
-    if (value.expiresAt <= now) localWindows.delete(key);
+    if (!value || value.expiresAt <= now) localWindows.delete(key);
   }
-  for (const [key, expiresAt] of localAlertWindows) {
-    if (expiresAt <= now) localAlertWindows.delete(key);
+  for (const [key, expiresAt] of localPenalties) {
+    if (!expiresAt || expiresAt <= now) localPenalties.delete(key);
+  }
+  for (const [key, expiresAt] of localAlerts) {
+    if (!expiresAt || expiresAt <= now) localAlerts.delete(key);
+  }
+
+  if (localWindows.size > maxEntries) {
+    deleteOldestEntries(localWindows, localWindows.size - maxEntries);
+  }
+  if (localPenalties.size > maxEntries) {
+    deleteOldestEntries(localPenalties, localPenalties.size - maxEntries);
+  }
+  if (localAlerts.size > Math.min(maxEntries, 2000)) {
+    deleteOldestEntries(localAlerts, localAlerts.size - Math.min(maxEntries, 2000));
   }
 }
 
-function localLimit(key, limit, periodMs, now = Date.now()) {
-  cleanupLocalMaps(now);
+function localLimit(key, limit, periodMs, now, maxEntries) {
+  cleanupLocalState(now, maxEntries);
 
   const previous = localWindows.get(key);
   if (!previous || previous.expiresAt <= now) {
+    enforceLocalCap(localWindows, maxEntries);
     localWindows.set(key, { count: 1, expiresAt: now + periodMs });
-    return { success: true, remaining: Math.max(0, limit - 1) };
+    return { success: true, remaining: Math.max(0, limit - 1), local: true };
   }
 
   previous.count += 1;
+  // Refresh insertion order only when the entry is actively used.
+  localWindows.delete(key);
   localWindows.set(key, previous);
+
   return {
     success: previous.count <= limit,
-    remaining: Math.max(0, limit - previous.count)
+    remaining: Math.max(0, limit - previous.count),
+    local: true
   };
 }
 
-async function consume(binding, key, fallbackLimit, fallbackPeriodSeconds) {
+async function consume(binding, key, fallbackLimit, fallbackPeriodSeconds, now, maxEntries) {
   if (binding && typeof binding.limit === "function") {
     try {
-      return await binding.limit({ key });
+      const result = await binding.limit({ key });
+      if (result && typeof result.success === "boolean") return result;
     } catch (error) {
-      console.warn("Sentinel rate-limit binding failed; using local fallback", error);
+      console.warn("Sentinel limiter binding unavailable; local fallback enabled", error);
     }
   }
 
   return localLimit(
     `fallback:${key}`,
     fallbackLimit,
-    fallbackPeriodSeconds * 1000
+    fallbackPeriodSeconds * 1000,
+    now,
+    maxEntries
   );
 }
 
-async function lookupBlock(env, clientKey, now) {
-  if (!env?.DB) return null;
+function setPenalty(key, seconds, now, maxEntries) {
+  enforceLocalCap(localPenalties, maxEntries);
+  localPenalties.set(key, now + seconds * 1000);
+}
 
-  try {
-    return await env.DB.prepare(
-      `SELECT reason, expires_at
-       FROM sentinel_blocklist
-       WHERE client_key = ?
-         AND (expires_at IS NULL OR expires_at > ?)
-       LIMIT 1`
-    ).bind(clientKey, now).first();
-  } catch (error) {
-    // Migration may not have been applied yet. Fail open so auth does not break.
-    console.warn("Sentinel blocklist lookup unavailable", error);
-    return null;
+function getPenaltySeconds(key, now) {
+  const expiresAt = localPenalties.get(key) || 0;
+  if (expiresAt <= now) {
+    if (expiresAt) localPenalties.delete(key);
+    return 0;
   }
+  return Math.max(1, Math.ceil((expiresAt - now) / 1000));
+}
+
+function declaredBodyTooLarge(request, maxBodyBytes) {
+  const method = request.method.toUpperCase();
+  if (!new Set(["POST", "PUT", "PATCH", "DELETE"]).has(method)) return false;
+
+  const value = request.headers.get("content-length");
+  if (!value) return false;
+
+  const length = Number(value);
+  return Number.isFinite(length) && length > maxBodyBytes;
+}
+
+async function getHmacKey(secret) {
+  if (cachedHmacSecret !== secret || !cachedHmacKeyPromise) {
+    cachedHmacSecret = secret;
+    cachedHmacKeyPromise = crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+  }
+  return cachedHmacKeyPromise;
+}
+
+async function clientStorageKey(ip, env) {
+  const secret = String(env?.SENTINEL_HASH_SECRET || env?.DEVICE_SALT || "sentinel-v2");
+  const key = await getHmacKey(secret);
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(String(ip))
+  );
+  return Array.from(new Uint8Array(sig), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function maybeCleanupD1(env, now) {
@@ -161,8 +276,8 @@ async function maybeCleanupD1(env, now) {
   if (now - lastDbCleanup < 60 * 60 * 1000) return;
   lastDbCleanup = now;
 
-  const retentionDays = numberEnv(env, "ATTACK_LOG_RETENTION_DAYS", 7, 1, 90);
-  const logCutoff = now - retentionDays * 24 * 60 * 60 * 1000;
+  const retentionDays = intEnv(env, "ATTACK_LOG_RETENTION_DAYS", DEFAULTS.retentionDays, 1, 90);
+  const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
 
   try {
     await env.DB.batch([
@@ -172,14 +287,34 @@ async function maybeCleanupD1(env, now) {
       ).bind(now),
       env.DB.prepare(
         `DELETE FROM sentinel_attack_logs WHERE timestamp < ?`
-      ).bind(logCutoff)
+      ).bind(cutoff)
     ]);
   } catch (error) {
-    console.warn("Sentinel cleanup failed", error);
+    console.warn("Sentinel D1 cleanup failed", error);
   }
 }
 
-async function persistAttack(env, event) {
+async function canPersistViolation(env, rawKey, reason, now, maxEntries) {
+  if (env?.SENTINEL_LOG_LIMITER && typeof env.SENTINEL_LOG_LIMITER.limit === "function") {
+    try {
+      const result = await env.SENTINEL_LOG_LIMITER.limit({ key: `${rawKey}:${reason}` });
+      return Boolean(result?.success);
+    } catch (error) {
+      console.warn("Sentinel log limiter unavailable", error);
+    }
+  }
+
+  const fallback = localLimit(
+    `log:${rawKey}:${reason}`,
+    1,
+    60_000,
+    now,
+    Math.min(maxEntries, 4000)
+  );
+  return fallback.success;
+}
+
+async function persistViolation(env, event) {
   if (!env?.DB) return;
 
   try {
@@ -220,11 +355,12 @@ async function persistAttack(env, event) {
 
     await env.DB.batch(statements);
   } catch (error) {
-    console.warn("Sentinel attack persistence failed", error);
+    // Fail open: security analytics must never break key/login functionality.
+    console.warn("Sentinel security log persistence failed", error);
   }
 }
 
-async function canSendAlert(env, reason) {
+async function canSendAlert(env, reason, now) {
   if (env?.SENTINEL_ALERT_LIMITER && typeof env.SENTINEL_ALERT_LIMITER.limit === "function") {
     try {
       const result = await env.SENTINEL_ALERT_LIMITER.limit({ key: `alert:${reason}` });
@@ -232,11 +368,10 @@ async function canSendAlert(env, reason) {
     } catch {}
   }
 
-  const now = Date.now();
   const key = `alert:${reason}`;
-  const expiresAt = localAlertWindows.get(key) || 0;
+  const expiresAt = localAlerts.get(key) || 0;
   if (expiresAt > now) return false;
-  localAlertWindows.set(key, now + 60_000);
+  localAlerts.set(key, now + 60_000);
   return true;
 }
 
@@ -244,14 +379,13 @@ async function sendAlert(env, event) {
   const botToken = String(env?.TELEGRAM_BOT_TOKEN || "");
   const chatId = String(env?.TELEGRAM_CHAT_ID || "");
   if (!botToken || !chatId) return;
-  if (!(await canSendAlert(env, event.reason))) return;
+  if (!(await canSendAlert(env, event.reason, event.now))) return;
 
-  const safeIp = event.ip === "unknown" ? "unknown" : event.ip.replace(/`/g, "");
   const text = [
-    "🚨 SENTINEL ALERT",
+    "🚨 SENTINEL V2",
     `Reason: ${event.reason}`,
-    `IP: ${safeIp}`,
     `Path: ${event.path}`,
+    `Country: ${event.country || "n/a"}`,
     `Ray: ${event.cfRay || "n/a"}`,
     `Time: ${new Date(event.now).toISOString()}`
   ].join("\n");
@@ -267,32 +401,40 @@ async function sendAlert(env, event) {
   }
 }
 
-async function reportViolation(request, env, ctx, clientKey, reason, blockSeconds = 0) {
+async function reportViolation(request, env, reason, blockSeconds, rawKey, maxEntries) {
   const now = Date.now();
+
+  if (!(await canPersistViolation(env, rawKey, reason, now, maxEntries))) {
+    return;
+  }
+
   const url = new URL(request.url);
+  const clientKey = await clientStorageKey(getClientIP(request), env);
   const event = {
     now,
     reason,
     blockSeconds,
     clientKey,
-    ip: getClientIP(request),
     userAgent: request.headers.get("user-agent") || "",
-    path: url.pathname,
+    path: normalizePath(url),
     cfRay: request.headers.get("cf-ray") || "",
     country: String(request.cf?.country || "")
   };
 
-  const work = Promise.allSettled([
-    persistAttack(env, event),
+  await Promise.allSettled([
+    persistViolation(env, event),
     sendAlert(env, event),
     maybeCleanupD1(env, now)
   ]);
+}
 
+function queueViolation(request, env, ctx, reason, blockSeconds, rawKey, maxEntries) {
+  const work = reportViolation(request, env, reason, blockSeconds, rawKey, maxEntries);
   if (ctx && typeof ctx.waitUntil === "function") {
     ctx.waitUntil(work);
-  } else {
-    await work;
+    return;
   }
+  return work;
 }
 
 function deny(status, error, message, retryAfter = 0) {
@@ -306,74 +448,109 @@ function deny(status, error, message, retryAfter = 0) {
 }
 
 export async function validateRequest(request, env, ctx) {
-  if (!enabled(env)) return { allowed: true };
+  if (!isEnabled(env)) return { allowed: true };
 
   const url = new URL(request.url);
-  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const path = normalizePath(url);
   if (!shouldProtect(request, path)) return { allowed: true };
 
   const now = Date.now();
-  const ip = getClientIP(request);
-  const clientKey = await clientStorageKey(ip, env);
-  const group = routeGroup(path);
-  const colo = String(request.cf?.colo || "unknown");
+  const maxEntries = intEnv(env, "SENTINEL_LOCAL_STATE_MAX", DEFAULTS.maxLocalEntries, 1000, 50000);
+  cleanupLocalState(now, maxEntries);
 
-  const globalLimit = numberEnv(env, "GLOBAL_RATE_LIMIT", DEFAULTS.globalLimit, 100, 1000000);
-  const global = await consume(
+  const ip = getClientIP(request);
+  const group = routeGroup(path);
+  // Raw IP is used only as an ephemeral limiter key inside Cloudflare/local memory.
+  // It is never written to D1 security logs.
+  const actorKey = `${ip}:${group}`;
+
+  const penaltySeconds = getPenaltySeconds(actorKey, now);
+  if (penaltySeconds > 0) {
+    return deny(
+      429,
+      "TEMPORARY_THROTTLE",
+      "Truy cập đang bị giới hạn tạm thời do tần suất bất thường.",
+      penaltySeconds
+    );
+  }
+
+  const maxBodyBytes = intEnv(env, "SENTINEL_MAX_BODY_BYTES", DEFAULTS.maxBodyBytes, 4096, 1024 * 1024);
+  if (declaredBodyTooLarge(request, maxBodyBytes)) {
+    queueViolation(request, env, ctx, "BODY_TOO_LARGE", 0, actorKey, maxEntries);
+    return deny(
+      413,
+      "BODY_TOO_LARGE",
+      "Dữ liệu gửi lên vượt quá giới hạn cho phép.",
+      0
+    );
+  }
+
+  const colo = String(request.cf?.colo || "unknown");
+  const globalLimit = intEnv(env, "GLOBAL_RATE_LIMIT", DEFAULTS.globalLimit, 100, 1000000);
+  const globalResult = await consume(
     env?.SENTINEL_GLOBAL_LIMITER,
     `global:${colo}`,
     globalLimit,
-    60
+    60,
+    now,
+    maxEntries
   );
 
-  if (!global?.success) {
-    await reportViolation(request, env, ctx, clientKey, "SYSTEM_OVERLOAD", 0);
+  if (!globalResult?.success) {
+    queueViolation(request, env, ctx, "SYSTEM_OVERLOAD", 0, actorKey, maxEntries);
     return deny(503, "SYSTEM_OVERLOAD", "Hệ thống đang quá tải, vui lòng thử lại sau.", 60);
   }
 
-  const ipLimit = numberEnv(env, "RATE_LIMIT_PER_IP", DEFAULTS.ipLimit, 5, 10000);
-  const ipWindow = numberEnv(env, "RATE_LIMIT_WINDOW", DEFAULTS.ipWindowSeconds, 10, 60);
-  const perIp = await consume(
-    env?.SENTINEL_API_LIMITER,
-    `${clientKey}:${group}`,
-    ipLimit,
-    ipWindow
+  const policy = policyFor(group, env);
+  const perActor = await consume(
+    policy.binding,
+    actorKey,
+    policy.limit,
+    policy.period,
+    now,
+    maxEntries
   );
 
-  if (!perIp?.success) {
-    await reportViolation(request, env, ctx, clientKey, "RATE_LIMIT_EXCEEDED", 0);
-    return deny(429, "RATE_LIMIT_EXCEEDED", "Quá nhiều yêu cầu. Vui lòng thử lại sau.", ipWindow);
+  if (!perActor?.success) {
+    queueViolation(request, env, ctx, `RATE_LIMIT_${group.toUpperCase()}`, 0, actorKey, maxEntries);
+    return deny(429, "RATE_LIMIT_EXCEEDED", "Quá nhiều yêu cầu. Vui lòng thử lại sau.", policy.period);
   }
 
-  // Exact 5-second local burst guard. This is isolate-local by design, so the
-  // Cloudflare 10-second binding below remains the distributed fast-path guard.
-  const burst5 = numberEnv(env, "BURST_THRESHOLD", DEFAULTS.burstLimit5s, 3, 1000);
-  const localBurst = localLimit(`burst5:${clientKey}:${group}`, burst5, 5000, now);
-
-  const burst10 = await consume(
-    env?.SENTINEL_BURST_LIMITER,
-    `${clientKey}:${group}`,
-    DEFAULTS.burstLimit10s,
-    10
-  );
-
-  if (!localBurst.success || !burst10?.success) {
-    const lockout = numberEnv(env, "LOCKOUT_SECONDS", DEFAULTS.lockoutSeconds, 30, 86400);
-    await reportViolation(request, env, ctx, clientKey, "BURST_DETECTED", lockout);
-    return deny(403, "BURST_DETECTED", "Phát hiện đột biến request. Truy cập đã bị khóa tạm thời.", lockout);
+  // Prefer Cloudflare's distributed 10-second limiter. The exact 5-second
+  // Map-based guard is used ONLY if the binding is unavailable, preventing
+  // attacker-controlled IP churn from growing local state during normal prod.
+  let burstAllowed = true;
+  if (env?.SENTINEL_BURST_LIMITER && typeof env.SENTINEL_BURST_LIMITER.limit === "function") {
+    const burstResult = await consume(
+      env.SENTINEL_BURST_LIMITER,
+      actorKey,
+      DEFAULTS.burstLimit10s,
+      10,
+      now,
+      maxEntries
+    );
+    burstAllowed = Boolean(burstResult?.success);
+  } else {
+    const burst5Limit = intEnv(env, "BURST_THRESHOLD", DEFAULTS.burstFallback5s, 3, 1000);
+    const burst5 = localLimit(
+      `burst5:${actorKey}`,
+      burst5Limit,
+      5000,
+      now,
+      maxEntries
+    );
+    burstAllowed = burst5.success;
   }
 
-  const blocked = await lookupBlock(env, clientKey, now);
-  if (blocked) {
-    const retryAfter = blocked.expires_at
-      ? Math.max(1, Math.ceil((Number(blocked.expires_at) - now) / 1000))
-      : 3600;
-
+  if (!burstAllowed) {
+    const blockSeconds = intEnv(env, "LOCKOUT_SECONDS", DEFAULTS.penaltySeconds, 30, 3600);
+    setPenalty(actorKey, blockSeconds, now, maxEntries);
+    queueViolation(request, env, ctx, "BURST_DETECTED", blockSeconds, actorKey, maxEntries);
     return deny(
-      403,
-      "CLIENT_BLOCKED",
-      "Truy cập đã bị chặn tạm thời do hoạt động bất thường.",
-      retryAfter
+      429,
+      "BURST_DETECTED",
+      "Phát hiện đột biến request. Truy cập đã bị giới hạn tạm thời.",
+      blockSeconds
     );
   }
 

@@ -37,7 +37,7 @@
     {
       "name": "SENTINEL_API_LIMITER",
       "namespace_id": "55742601",
-      "simple": { "limit": 60, "period": 60 }
+      "simple": { "limit": 120, "period": 60 }
     },
     {
       "name": "SENTINEL_BURST_LIMITER",
@@ -53,6 +53,36 @@
       "name": "SENTINEL_ALERT_LIMITER",
       "namespace_id": "55742604",
       "simple": { "limit": 1, "period": 60 }
+    },
+    {
+      "name": "SENTINEL_ADMIN_LIMITER",
+      "namespace_id": "55742605",
+      "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "SENTINEL_AUTH_LIMITER",
+      "namespace_id": "55742606",
+      "simple": { "limit": 60, "period": 60 }
+    },
+    {
+      "name": "SENTINEL_LINK4M_LIMITER",
+      "namespace_id": "55742607",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "SENTINEL_LOG_LIMITER",
+      "namespace_id": "55742608",
+      "simple": { "limit": 1, "period": 60 }
+    },
+    {
+      "name": "SENTINEL_FEATURE_LIMITER",
+      "namespace_id": "55742609",
+      "simple": { "limit": 180, "period": 60 }
+    },
+    {
+      "name": "SENTINEL_CALLBACK_LIMITER",
+      "namespace_id": "55742610",
+      "simple": { "limit": 120, "period": 60 }
     }
   ],
   "vars": {
@@ -61,12 +91,19 @@
     "AUTH_ACTIVE_BUILD_ID": "sent-menu-2026.08.07-r1",
     "AUTH_CLIENT_VERSION": "5.2.1",
     "AUTH_POLICY_GENERATION": "1",
+
     "SENTINEL_ENABLED": "true",
-    "RATE_LIMIT_PER_IP": "60",
-    "RATE_LIMIT_WINDOW": "60",
-    "BURST_THRESHOLD": "15",
     "GLOBAL_RATE_LIMIT": "5000",
+    "BURST_THRESHOLD": "15",
     "LOCKOUT_SECONDS": "300",
+    "SENTINEL_MAX_BODY_BYTES": "65536",
+    "SENTINEL_LOCAL_STATE_MAX": "12000",
+    "SENTINEL_API_FALLBACK_LIMIT": "120",
+    "SENTINEL_AUTH_FALLBACK_LIMIT": "60",
+    "SENTINEL_LINK4M_FALLBACK_LIMIT": "30",
+    "SENTINEL_ADMIN_FALLBACK_LIMIT": "10",
+    "SENTINEL_FEATURE_FALLBACK_LIMIT": "180",
+    "SENTINEL_CALLBACK_FALLBACK_LIMIT": "120",
     "ATTACK_LOG_RETENTION_DAYS": "7"
   }
 }

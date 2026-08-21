@@ -1,11 +1,11 @@
 name = "sentkeyfree"
-main = "index.js"
+main = "auth-worker.js"
 compatibility_date = "2026-08-01"
 
 [assets]
 directory = "."
 binding = "ASSETS"
-run_worker_first = ["/api/*", "/a", "/senttwgetkey", "/senttwnhankey"]
+run_worker_first = ["/api/*", "/a", "/auth", "/login", "/verify", "/check", "/license/*", "/get_mod.php", "/senttwgetkey", "/senttwnhankey"]
 
 [[d1_databases]]
 binding = "DB"
@@ -13,9 +13,96 @@ database_name = "sent-key-db"
 database_id = "ed7fc490-f3d1-4b45-ab68-83bf89cc65d6"
 migrations_dir = "."
 
+[[kv_namespaces]]
+binding = "FEATURES_KV"
+id = "353ac39868314228adedbfde86b6334e"
+
+[[ratelimits]]
+name = "SENTINEL_API_LIMITER"
+namespace_id = "55742601"
+[ratelimits.simple]
+limit = 120
+period = 60
+
+[[ratelimits]]
+name = "SENTINEL_BURST_LIMITER"
+namespace_id = "55742602"
+[ratelimits.simple]
+limit = 30
+period = 10
+
+[[ratelimits]]
+name = "SENTINEL_GLOBAL_LIMITER"
+namespace_id = "55742603"
+[ratelimits.simple]
+limit = 5000
+period = 60
+
+[[ratelimits]]
+name = "SENTINEL_ALERT_LIMITER"
+namespace_id = "55742604"
+[ratelimits.simple]
+limit = 1
+period = 60
+
+[[ratelimits]]
+name = "SENTINEL_ADMIN_LIMITER"
+namespace_id = "55742605"
+[ratelimits.simple]
+limit = 10
+period = 60
+
+[[ratelimits]]
+name = "SENTINEL_AUTH_LIMITER"
+namespace_id = "55742606"
+[ratelimits.simple]
+limit = 60
+period = 60
+
+[[ratelimits]]
+name = "SENTINEL_LINK4M_LIMITER"
+namespace_id = "55742607"
+[ratelimits.simple]
+limit = 30
+period = 60
+
+[[ratelimits]]
+name = "SENTINEL_LOG_LIMITER"
+namespace_id = "55742608"
+[ratelimits.simple]
+limit = 1
+period = 60
+
+[[ratelimits]]
+name = "SENTINEL_FEATURE_LIMITER"
+namespace_id = "55742609"
+[ratelimits.simple]
+limit = 180
+period = 60
+
+[[ratelimits]]
+name = "SENTINEL_CALLBACK_LIMITER"
+namespace_id = "55742610"
+[ratelimits.simple]
+limit = 120
+period = 60
+
 [vars]
 DEMO_MODE = "false"
 AUTH_ENABLED = "true"
 AUTH_ACTIVE_BUILD_ID = "sent-menu-2026.08.07-r1"
 AUTH_CLIENT_VERSION = "5.2.1"
 AUTH_POLICY_GENERATION = "1"
+SENTINEL_ENABLED = "true"
+GLOBAL_RATE_LIMIT = "5000"
+BURST_THRESHOLD = "15"
+LOCKOUT_SECONDS = "300"
+SENTINEL_MAX_BODY_BYTES = "65536"
+SENTINEL_LOCAL_STATE_MAX = "12000"
+SENTINEL_API_FALLBACK_LIMIT = "120"
+SENTINEL_AUTH_FALLBACK_LIMIT = "60"
+SENTINEL_LINK4M_FALLBACK_LIMIT = "30"
+SENTINEL_ADMIN_FALLBACK_LIMIT = "10"
+SENTINEL_FEATURE_FALLBACK_LIMIT = "180"
+SENTINEL_CALLBACK_FALLBACK_LIMIT = "120"
+ATTACK_LOG_RETENTION_DAYS = "7"
