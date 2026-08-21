@@ -920,4 +920,24 @@
   if (topRefreshBtn) topRefreshBtn.addEventListener("click", () => $("refreshStatsBtn")?.click());
   const topLogoutBtn = $("topLogoutBtn");
   if (topLogoutBtn) topLogoutBtn.addEventListener("click", () => $("logoutBtn")?.click());
+
+  const premiumRefresh = $("premiumRefreshBtn");
+  if (premiumRefresh) {
+    premiumRefresh.addEventListener("click", async () => {
+      premiumRefresh.disabled = true;
+      premiumRefresh.textContent = "↻ Đang đồng bộ...";
+      try {
+        await loadAllStats();
+        premiumRefresh.textContent = "✓ Đã đồng bộ";
+        setTimeout(() => {
+          premiumRefresh.textContent = "↻ Đồng bộ dữ liệu";
+        }, 1200);
+      } catch {
+        premiumRefresh.textContent = "⚠ Thử lại";
+      } finally {
+        premiumRefresh.disabled = false;
+      }
+    });
+  }
+
 })();

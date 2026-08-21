@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="theme-color" content="#06101d">
   <title>Sent Control Center</title>
-  <link rel="stylesheet" href="/sent-control.css?v=sent-admin-8">
+  <link rel="stylesheet" href="/sent-control.css?v=sent-admin-10">
 </head>
 <body>
   <div class="background-grid" aria-hidden="true"></div>
@@ -57,16 +57,28 @@
 
     <section id="dashboard" class="dashboard hidden">
       <section class="command-bar">
-        <div class="command-title"><span class="live-dot"></span><div><strong>Sent Tweaks Admin</strong><small>Control Center • Production • V9</small></div></div>
+        <div class="command-title"><span class="live-dot"></span><div><strong>Sent Tweaks Admin</strong><small>Control Center • Production • V10 PREMIUM</small></div></div>
         <div class="command-actions"><button id="topRefreshBtn" class="icon-action" type="button">↻ <span>Làm mới</span></button><button id="topLogoutBtn" class="icon-action danger-soft" type="button">⎋ <span>Đăng xuất</span></button></div>
+      </section>
+      
+      <section class="premium-overview">
+        <div class="premium-copy">
+          <span class="premium-kicker"><i></i> SENT ADMIN • LIVE CONTROL</span>
+          <h2>Trung tâm điều hành hệ thống</h2>
+          <p>Theo dõi key, thiết bị, lượt nhận, VIP và an ninh từ một giao diện duy nhất.</p>
+        </div>
+        <div class="premium-actions">
+          <button id="premiumRefreshBtn" type="button" class="premium-action">↻ Đồng bộ dữ liệu</button>
+          <span class="premium-live"><i></i> LIVE</span>
+        </div>
       </section>
       <section class="system-strip"><div><span class="pulse"></span><strong>API Admin</strong><small id="apiHealth">Đang kiểm tra</small></div><div><strong>Dữ liệu</strong><small id="dataFreshness">Chưa đồng bộ</small></div><div><strong>Múi giờ</strong><small>Việt Nam • UTC+7</small></div><div><strong>Phiên quản trị</strong><small>Đã xác thực</small></div></section>
       <nav class="admin-nav" aria-label="Điều hướng quản trị"><span class="nav-label">CONTROL</span>
-        <a href="#overview">Tổng quan</a>
-        <a href="#security">Bảo mật</a>
-        <a href="#free-keys">Free</a>
-        <a href="#vip-keys">VIP</a>
-        <a href="#license-tools">Công cụ</a>
+        <a href="#overview"><span>Tổng quan</span><small>Overview</small></a>
+        <a href="#security"><span>Bảo mật</span><small>Security</small></a>
+        <a href="#free-keys"><span>Free</span><small>Licenses</small></a>
+        <a href="#vip-keys"><span>VIP</span><small>Premium</small></a>
+        <a href="#license-tools"><span>Công cụ</span><small>Utilities</small></a>
       </nav>
 
       <section id="overview" class="dashboard-hero">
@@ -466,6 +478,6 @@
     </section>
   </main>
 
-  <script src="/sent-control.js?v=sent-admin-7" defer></script>
+  <script src="/sent-control.js?v=sent-admin-10" defer></script>
 </body>
 </html>
