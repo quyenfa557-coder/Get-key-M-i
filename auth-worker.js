@@ -394,10 +394,10 @@ async function extractSubmittedKey(request) {
     return {
       key: normalizeDatabaseKey(
         form.get("user_key") ||
-        form.get("key") ||
-        form.get("license_key") ||
-        form.get("code") ||
-        ""
+          form.get("key") ||
+          form.get("license_key") ||
+          form.get("code") ||
+          ""
       ),
       kind: isLibloader ? "libloader" : "legacy"
     };
@@ -443,7 +443,6 @@ async function rewriteRequestPath(request, newPath) {
   return new Request(url.toString(), init);
 }
 
-
 /* =========================================================
  * LINK4M HISTORY V3 — immutable analytics
  *
@@ -470,7 +469,7 @@ function randomToken(byteLength = 32) {
 }
 
 async function sha256Hex(text) {
-  const bytes = new TextEncoder().encode(String(text));
+  const bytes = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
 
   return Array.from(
@@ -498,20 +497,38 @@ function ensureLink4mHistory(env) {
          ON link4m_history(completed_at)`
       ).run();
 
-      // One-time/continuous backfill from all completed sessions that
-      // still exist. INSERT OR IGNORE makes this safe on every cold start.
-      await env.DB.prepare(
-        `INSERT OR IGNORE INTO link4m_history (
-           license_key,
-           completed_at
-         )
-         SELECT
-           license_key,
-           completed_at
-         FROM link_sessions
-         WHERE completed_at IS NOT NULL
-           AND license_key IS NOT NULL`
-      ).run();
+      // FIXED: backfill runs ONLY ONCE (KV flag) instead of every cold start.
+      // - First cold start after deploy: flag absent => backfill runs one last
+      //   time so no completed session is missed (stats stay 100% accurate).
+      // - INSERT OR IGNORE => no duplicate rows, numbers never inflate.
+      // - Real-time writes in recordCompletedLink4mSession() are unchanged.
+      // - If KV is unavailable for any reason, fall back to the old behavior
+      //   so correctness is never compromised.
+      const kv = env.FEATURES_KV;
+      let backfillDone = false;
+
+      if (kv && typeof kv.get === "function") {
+        backfillDone = (await kv.get("flag:backfill_v1")) === "1";
+      }
+
+      if (!backfillDone) {
+        await env.DB.prepare(
+          `INSERT OR IGNORE INTO link4m_history (
+             license_key,
+             completed_at
+           )
+           SELECT
+             license_key,
+             completed_at
+           FROM link_sessions
+           WHERE completed_at IS NOT NULL
+             AND license_key IS NOT NULL`
+        ).run();
+
+        if (kv && typeof kv.put === "function") {
+          await kv.put("flag:backfill_v1", "1");
+        }
+      }
 
       return true;
     })().catch(error => {
@@ -761,7 +778,6 @@ async function forwardAndRecordLink4mComplete(
   return response;
 }
 
-
 /* FREE / Link4m analytics V2 */
 
 function mapRecentLink4mRow(row, now) {
@@ -936,10 +952,7 @@ async function handleAccurateLink4mStats(request, env) {
           summary?.completed_sessions ||
           0
         ),
-      total:
-        Number(
-          summary?.total || 0
-        ),
+      total: Number(summary?.total || 0),
       today,
       yesterday,
       active:
@@ -1380,7 +1393,6 @@ async function forwardVipAlias(request, env, ctx, targetPath) {
   );
 }
 
-
 /* =========================================================
  * GET MOD — VIP-authenticated feature asset delivery
  * Only this endpoint is added. Existing routes remain unchanged.
@@ -1629,7 +1641,6 @@ async function handleGetMod(request, env, ctx) {
   }, 404);
 }
 
-
 /* Sentinel V2 admin analytics.
  * Reads sampled security events only; it is never on the public fast path.
  */
@@ -1739,7 +1750,6 @@ async function handleDDoSStats(request, env) {
     }, 503);
   }
 }
-
 
 export default {
   async fetch(request, env, ctx) {
