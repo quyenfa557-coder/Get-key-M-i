@@ -84,7 +84,7 @@ function showKey(data) {
 
 function setGenerateButtonLoading(
   loading,
-  text = "Generate"
+  text = "Nhận key ngay"
 ) {
   const button = $("generateBtn");
 
@@ -94,7 +94,7 @@ function setGenerateButtonLoading(
 
   button.innerHTML = loading
     ? `<span>⌛</span><span>${text}</span>`
-    : "<span>⇥</span><span>Generate</span>";
+    : "<span>Nhận key ngay</span><span aria-hidden=\"true\">→</span>";
 }
 
 async function startLink4m() {
