@@ -74,18 +74,12 @@ function normalizeDatabaseKey(value) {
     .replace(/[‐‑‒–—−]/g, "-")
     .replace(/\s+/g, "");
 
-  while (key.startsWith("SUNNY-SUNNY-")) {
-    key = key.slice("SUNNY-".length);
-  }
-
-  if (key.startsWith("SUNNY-SENT-")) {
-    key = key.slice("SUNNY-".length);
-  }
-
-  if (/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(key)) {
-    key = `SUNNY-${key}`;
-  } else if (/^[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)) {
+  if (/^[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)) {
     key = `SENT-${key}`;
+  }
+
+  if (!/^SENT-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)) {
+    return "";
   }
 
   return key;

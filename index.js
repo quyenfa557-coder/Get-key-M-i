@@ -57,14 +57,6 @@ function normalizePlan(value) {
 }
 
 
-function normalizeKeyFormat(value) {
-  return String(value || "")
-    .trim()
-    .toUpperCase() === "SUNNY"
-      ? "SUNNY"
-      : "SENT";
-}
-
 function normalizeKey(value) {
   let key = String(value ?? "")
     .trim()
@@ -73,44 +65,16 @@ function normalizeKey(value) {
     .replace(/[‐‑‒–—−]/g, "-")
     .replace(/\s+/g, "");
 
-  /*
-   * Libloader có thể tự thêm SUNNY- vào key đã có SUNNY-:
-   * SUNNY-SUNNY-7K9P-H38Q-Z52N
-   * → SUNNY-7K9P-H38Q-Z52N
-   */
-  while (key.startsWith("SUNNY-SUNNY-")) {
-    key = key.slice("SUNNY-".length);
-  }
-
-  /*
-   * Libloader bọc key SENT:
-   * SUNNY-SENT-ABCDE-FGHIJ-KLMNO
-   * → SENT-ABCDE-FGHIJ-KLMNO
-   */
-  if (key.startsWith("SUNNY-SENT-")) {
-    key = key.slice("SUNNY-".length);
-  }
-
-  /*
-   * Cho phép phần thân không có tiền tố.
-   */
-  if (/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(key)) {
-    key = `SUNNY-${key}`;
-  } else if (
-    /^[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)
-  ) {
+  if (/^[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key)) {
     key = `SENT-${key}`;
   }
-
-  const validSunny =
-    /^SUNNY-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(key);
 
   const validSent =
     /^SENT-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(key);
 
-  if (!validSunny && !validSent) {
+  if (!validSent) {
     throw new Error(
-      "Key không đúng định dạng. Dùng SUNNY-XXXX-XXXX-XXXX hoặc SENT-XXXXX-XXXXX-XXXXX."
+      "Key không đúng định dạng. Chỉ hỗ trợ SENT-XXXXX-XXXXX-XXXXX."
     );
   }
 
@@ -143,14 +107,7 @@ function randomPart(length = 5) {
   ).join("");
 }
 
-function createKey(keyFormat = "SENT") {
-  const format =
-    normalizeKeyFormat(keyFormat);
-
-  if (format === "SUNNY") {
-    return `SUNNY-${randomPart(4)}-${randomPart(4)}-${randomPart(4)}`;
-  }
-
+function createKey() {
   return `SENT-${randomPart(5)}-${randomPart(5)}-${randomPart(5)}`;
 }
 
@@ -1734,8 +1691,7 @@ function authIsLegacyClient(request) {
   return (
     request.headers.has("x-nonce") ||
     request.headers.has("x-sig") ||
-    request.headers.has("x-build-id") ||
-    userAgent.includes("SunnyMod/1.0")
+    request.headers.has("x-build-id")
   );
 }
 
