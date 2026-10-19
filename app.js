@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 
 let currentKey = "";
+let copyResetTimer = 0;
 
 function setMessage(text, type = "") {
   const message = $("message");
@@ -84,17 +85,21 @@ function showKey(data) {
 
 function setGenerateButtonLoading(
   loading,
-  text = "Generate"
+  text = "Đang xử lý..."
 ) {
   const button = $("generateBtn");
 
   if (!button) return;
 
   button.disabled = loading;
+  button.setAttribute(
+    "aria-busy",
+    loading ? "true" : "false"
+  );
 
   button.innerHTML = loading
-    ? `<span>⌛</span><span>${text}</span>`
-    : "<span>⇥</span><span>Generate</span>";
+    ? `<span class="spinner" aria-hidden="true"></span><span>${text}</span>`
+    : `<svg class="icon" aria-hidden="true"><use href="#i-bolt"></use></svg><span>Nhận key 24H</span>`;
 }
 
 async function startLink4m() {
@@ -209,11 +214,17 @@ async function copyKey() {
     temporaryInput.remove();
   }
 
-  button.textContent = "Đã sao chép ✓";
+  window.clearTimeout(copyResetTimer);
 
-  setTimeout(() => {
-    button.textContent = "Sao chép key";
-  }, 1500);
+  button.innerHTML =
+    `<svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg><span>Đã sao chép</span>`;
+  button.classList.add("copied");
+
+  copyResetTimer = window.setTimeout(() => {
+    button.innerHTML =
+      `<svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>Sao chép key</span>`;
+    button.classList.remove("copied");
+  }, 1600);
 }
 
 function restoreSavedKey() {
